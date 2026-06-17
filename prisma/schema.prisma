@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+}
+
+// Countries under study. Stored as an enum so it acts as a stable, low-
+// cardinality categorical feature for ML/DL (clean label/one-hot encoding,
+// no free-text noise). Extend deliberately — order is not significant.
+enum Country {
+  BANGLADESH
+  INDIA
+  THAILAND
+  PHILIPPINES
+  MALAYSIA
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password_hash String
+  role          Role      @default(TEACHER)
+  name          String?
+  designation   String?
+  department    String?
+  university    String?
+  photo_url     String?
+  created_at    DateTime? @default(now()) @db.Timestamptz
+
+  @@map("users")
+}
+
+model Intersection {
+  id               String                 @id
+  name             String
+  country          Country?               // categorical feature for country-level analysis
+  city             String?
+  google_maps_url  String
+  // Geospatial features (parsed from the maps URL when available). Useful as
+  // continuous DL inputs and for clustering / spatial joins.
+  latitude         Float?
+  longitude        Float?
+  expected_type    String?
+  main_road_label  String?
+  arm_count        Int?                   // denormalized count of arms (quick feature)
+  notes            String?
+  created_at       DateTime?              @default(now()) @db.Timestamptz
+  arms             IntersectionArm[]
+  observations     TrafficObservation[]
+  processing_runs  ProcessingRun[]
+
+  @@index([country])
+  @@map("intersections")
+}
+
+model IntersectionArm {
+  id                    BigInt               @id @default(autoincrement())
+  intersection_id       String
+  arm_label             String
+  // Directed polyline (A→B) the vision samples along. Stored as JSON
+  // [{x,y}, ...]; the last point is the "toward"/signal end.
+  points                Json?
+  arm_order             Int?
+  angle_start           Decimal?
+  angle_end             Decimal?
+  is_main               Boolean?             @default(false)
+  expected_lane_groups  Int?
+  notes                 String?
+
+  intersection          Intersection         @relation(fields: [intersection_id], references: [id], onDelete: Cascade)
+  observations          TrafficObservation[]
+
+  @@unique([intersection_id, arm_label])
+  @@map("intersection_arms")
+}
+
+model TrafficObservation {
+  id                    BigInt           @id @default(autoincrement())
+  intersection_id       String
+  arm_id                BigInt?
+  observed_at           DateTime         @db.Timestamptz
+  // ─── Denormalized features (ML/DL training table is join-free) ───
+  country               Country?         // copied from the parent intersection
+  direction             String?          // 'incoming' (toward signal) | 'outgoing'
+  hour_of_day           Int?             // 0-23, derived from observed_at (local model uses UTC)
+  day_of_week           Int?             // 1=Mon … 7=Sun (ISO-8601)
+  is_weekend            Boolean?         // country-aware weekend (e.g. Fri/Sat in Bangladesh)
+  // ─── Target / signal columns ───
+  // ── Whole-line aggregate ──
+  dominant_color        String?
+  green_pct             Decimal?
+  yellow_pct            Decimal?
+  red_pct               Decimal?
+  dark_red_pct          Decimal?
+  congestion_score      Decimal?
+  // ── End-prioritized signal features (the queue before the signal) ──
+  weighted_congestion_score Decimal?     // whole line, weighted toward the signal end
+  end_dominant_color    String?
+  end_green_pct         Decimal?
+  end_yellow_pct        Decimal?
+  end_red_pct           Decimal?
+  end_dark_red_pct      Decimal?
+  end_congestion_score  Decimal?
+  signal_dominant_color String?          // the stop-line itself (peak of last 2 bins)
+  signal_congestion_score Decimal?
+  red_queue_px          Float?           // contiguous congested length back from the signal
+  red_queue_frac        Decimal?
+  arm_length_px         Float?
+  // ── Spatial colour profile (start → signal end), for sequence models ──
+  profile               Json?
+  estimated_lane_groups Int?
+  confidence            Decimal?
+  extractor_version     String?
+  created_at            DateTime?        @default(now()) @db.Timestamptz
+
+  intersection          Intersection     @relation(fields: [intersection_id], references: [id], onDelete: Cascade)
+  arm                   IntersectionArm? @relation(fields: [arm_id], references: [id], onDelete: SetNull)
+
+  @@index([observed_at])
+  @@index([intersection_id, observed_at(sort: Desc)])
+  @@index([arm_id, observed_at(sort: Desc)])
+  @@index([country, observed_at(sort: Desc)])
+  @@map("traffic_observations")
+}
+
+model ProcessingRun {
+  id                BigInt    @id @default(autoincrement())
+  intersection_id   String
+  started_at        DateTime  @db.Timestamptz
+  finished_at       DateTime? @db.Timestamptz
+  status            String
+  message           String?
+  extractor_version String?
+
+  intersection      Intersection @relation(fields: [intersection_id], references: [id], onDelete: Cascade)
+
+  @@map("processing_runs")
+}

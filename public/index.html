@@ -1,0 +1,2596 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <title>Traffic Intersection Analyzer — AI-Powered Road Configuration</title>
+    <script>
+        // AUTH GUARD: Redirect to login if no token
+        const token = localStorage.getItem('token');
+        if (!token) {
+            window.location.href = '/login.html';
+        }
+        
+        // Intercept global fetch to attach auth token & handle 401s
+        const originalFetch = window.fetch;
+        window.fetch = async (...args) => {
+            let [resource, config] = args;
+            if (resource.startsWith('/api/')) {
+                config = config || {};
+                config.headers = { ...config.headers, 'Authorization': `Bearer ${localStorage.getItem('token')}` };
+            }
+            const response = await originalFetch(resource, config);
+            if (response.status === 401 && resource.startsWith('/api/')) {
+                localStorage.removeItem('token');
+                window.location.href = '/login.html';
+            }
+            return response;
+        };
+    </script>
+    <meta name="description" content="Analyze traffic intersections using AI computer vision. Draw road arms on Google Maps screenshots to configure intersection geometry for automated traffic analysis.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ─── Claude-style design tokens ───────────────────────── */
+        :root {
+            --paper:   #F0EEE6;   /* app background (warm paper) */
+            --panel:   #FAF9F5;   /* cards */
+            --panel-2: #F1EFE7;   /* inset surfaces / inputs */
+            --ink:     #262521;   /* primary text */
+            --ink-2:   #6E6C64;   /* secondary text */
+            --ink-3:   #9C9A8F;   /* tertiary text */
+            --line:    #E5E2D6;   /* hairline borders */
+            --line-2:  #D8D4C6;   /* stronger borders */
+            --clay:    #D97757;   /* Claude accent (clay/coral) */
+            --clay-hi: #C2613F;   /* accent hover */
+            --clay-tint:#F2E3DA;  /* accent wash */
+            --ok:#5A7F62;   --ok-tint:#E7EFE6;
+            --warn:#B07F37; --warn-tint:#F3EAD6;
+            --err:#B24B3E;  --err-tint:#F4DEDA;
+            --radius: 14px;
+            --radius-sm: 9px;
+            --shadow: 0 1px 2px rgba(45,42,34,.04), 0 6px 20px rgba(45,42,34,.05);
+            --shadow-lg: 0 12px 40px rgba(45,42,34,.12);
+            --sans: 'Hanken Grotesk', system-ui, sans-serif;
+            --serif: 'Newsreader', Georgia, serif;
+            --mono: 'JetBrains Mono', ui-monospace, monospace;
+        }
+
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: var(--sans);
+            background-color: var(--paper);
+            background-image:
+                radial-gradient(900px 500px at 88% -8%, rgba(217,119,87,.07), transparent 60%),
+                radial-gradient(800px 500px at 5% 110%, rgba(110,108,96,.05), transparent 55%);
+            color: var(--ink);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
+            margin: 0;
+        }
+
+        /* ─── Utility shims (used by the app JS) ──────────────── */
+        .hidden { display: none !important; }
+        .rotate-180 { transform: rotate(180deg); }
+        .opacity-60 { opacity: .6; }
+        .pointer-events-none { pointer-events: none; }
+
+        /* ─── Cards / sections ────────────────────────────────── */
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+        .card-pad { padding: 18px; }
+
+        .eyebrow {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 11px; font-weight: 600; letter-spacing: .09em;
+            text-transform: uppercase; color: var(--ink-3); margin: 0 0 14px;
+        }
+        .eyebrow svg { width: 15px; height: 15px; color: var(--clay); }
+        .eyebrow .count { margin-left: auto; letter-spacing: .02em; text-transform: none; color: var(--ink-3); font-weight: 500; }
+
+        /* ─── Top bar ─────────────────────────────────────────── */
+        .topbar {
+            position: sticky; top: 0; z-index: 40;
+            background: rgba(240,238,230,.82);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--line);
+        }
+        .topbar-inner { max-width: 1760px; margin: 0 auto; padding: 13px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .logo { width: 34px; height: 34px; color: var(--clay); flex-shrink: 0; }
+        .brand h1 { font-family: var(--serif); font-weight: 500; font-size: 21px; line-height: 1.1; margin: 0; letter-spacing: -.01em; }
+        .brand p { font-size: 12px; color: var(--ink-2); margin: 2px 0 0; }
+
+        .mode-indicator {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 7px 13px; border-radius: 999px;
+            background: var(--panel); border: 1px solid var(--line);
+            font-size: 12px; font-weight: 500; color: var(--ink-2);
+        }
+        #mode-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-3); transition: background .3s; }
+        .dot-idle { background: var(--ink-3) !important; }
+        .dot-draw { background: var(--clay) !important; }
+        .dot-online { background: #5E9B6B !important; box-shadow: 0 0 0 0 rgba(94,155,107,.55); animation: pulse-online 2.2s ease-out infinite; }
+        @keyframes pulse-online { 0% { box-shadow: 0 0 0 0 rgba(94,155,107,.5); } 70% { box-shadow: 0 0 0 5px rgba(94,155,107,0); } 100% { box-shadow: 0 0 0 0 rgba(94,155,107,0); } }
+
+        /* ─── Labels & inputs ─────────────────────────────────── */
+        .field-label { display: block; font-size: 12px; font-weight: 500; color: var(--ink-2); margin-bottom: 6px; }
+        input[type=text], textarea, select {
+            width: 100%; font-family: var(--sans); font-size: 14px; color: var(--ink);
+            background: var(--panel-2); border: 1px solid var(--line-2);
+            border-radius: var(--radius-sm); padding: 10px 12px;
+            transition: border-color .18s, box-shadow .18s, background .18s;
+        }
+        textarea { resize: none; line-height: 1.5; }
+        input::placeholder, textarea::placeholder { color: var(--ink-3); }
+        input[type=text]:focus, textarea:focus, select:focus {
+            outline: none; background: var(--panel);
+            border-color: var(--clay);
+            box-shadow: 0 0 0 3px rgba(217,119,87,.16);
+        }
+        select {
+            appearance: none; cursor: pointer;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239C9A8F' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 11px center; padding-right: 34px;
+        }
+
+        /* ─── Buttons ─────────────────────────────────────────── */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            width: 100%; font-family: var(--sans); font-size: 14px; font-weight: 600;
+            padding: 11px 16px; border-radius: var(--radius-sm); border: 1px solid transparent;
+            cursor: pointer; transition: background .18s, border-color .18s, color .18s, transform .05s, box-shadow .18s;
+        }
+        .btn svg { width: 16px; height: 16px; }
+        .btn:active { transform: translateY(.5px); }
+        .btn:disabled { cursor: default; }
+
+        .btn-primary { background: var(--clay); color: #fff; box-shadow: 0 1px 2px rgba(194,97,63,.25); }
+        .btn-primary:hover { background: var(--clay-hi); }
+
+        .btn-dark { background: var(--ink); color: #F2F0E9; }
+        .btn-dark:hover { background: #36342E; }
+
+        .btn-tonal { background: var(--panel-2); color: var(--ink); border-color: var(--line-2); }
+        .btn-tonal:hover { background: #EAE7DC; border-color: var(--line-2); }
+
+        /* ─── Segmented mode control ──────────────────────────── */
+        .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .mode-btn {
+            display: flex; flex-direction: column; align-items: center; gap: 7px;
+            padding: 13px 8px; border-radius: var(--radius-sm);
+            background: var(--panel-2); border: 1px solid var(--line);
+            color: var(--ink-2); font-size: 12px; font-weight: 600; cursor: pointer;
+            transition: all .18s;
+        }
+        .mode-btn svg { width: 19px; height: 19px; }
+        .mode-btn:hover { border-color: var(--line-2); color: var(--ink); }
+        .mode-btn.active { background: var(--clay-tint); border-color: rgba(217,119,87,.45); color: var(--clay-hi); }
+        .mode-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0 0; text-align: center; font-style: italic; line-height: 1.5; }
+
+        /* Draft (in-progress) controls */
+        .draft-bar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+        .draft-bar .status { flex: 1; font-size: 12px; color: var(--clay-hi); font-weight: 500; }
+        .btn-mini { padding: 7px 13px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: all .15s; }
+        .btn-mini.finish { background: var(--clay); color: #fff; }
+        .btn-mini.finish:hover { background: var(--clay-hi); }
+        .btn-mini.finish:disabled { opacity: .4; pointer-events: none; }
+        .btn-mini.cancel { background: var(--panel-2); border-color: var(--line-2); color: var(--ink-2); }
+        .btn-mini.cancel:hover { background: #EAE7DC; color: var(--ink); }
+
+        /* ─── Arm list ────────────────────────────────────────── */
+        #arm-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+        .arm-empty { font-size: 12px; color: var(--ink-3); text-align: center; padding: 18px 0; font-style: italic; }
+        .arm-item {
+            display: flex; flex-direction: column; gap: 7px; padding: 9px 11px;
+            border-radius: var(--radius-sm); border: 1px solid var(--line);
+            background: var(--panel-2); transition: background .18s, border-color .18s, opacity .18s;
+        }
+        .arm-item:hover { border-color: var(--line-2); }
+        .arm-item.highlighted { background: var(--clay-tint); border-color: rgba(217,119,87,.4); }
+        .arm-item.arm-hidden { opacity: .5; }
+        .arm-row1 { display: flex; align-items: center; gap: 9px; }
+        .arm-row2 { display: flex; align-items: center; gap: 9px; }
+        .arm-vis { width: 15px; height: 15px; flex-shrink: 0; accent-color: var(--clay); cursor: pointer; }
+        .arm-color {
+            width: 22px; height: 22px; flex-shrink: 0; padding: 0; cursor: pointer;
+            border: 1px solid var(--line-2); border-radius: 6px; background: none;
+        }
+        .arm-color::-webkit-color-swatch-wrapper { padding: 2px; }
+        .arm-color::-webkit-color-swatch { border: none; border-radius: 4px; }
+        .arm-name-input { flex: 1; min-width: 0; background: transparent !important; border: none; border-bottom: 1px solid transparent !important; border-radius: 0; padding: 2px 2px; font-size: 14px; font-weight: 500; }
+        .arm-name-input:hover { border-bottom-color: var(--line-2) !important; }
+        .arm-name-input:focus { box-shadow: none !important; border-bottom-color: var(--clay) !important; }
+        .arm-width { flex-shrink: 0; width: 84px; accent-color: var(--clay); cursor: pointer; }
+        .arm-width-val { font-family: var(--mono); font-size: 10px; color: var(--ink-2); flex-shrink: 0; min-width: 26px; }
+        .arm-meta { flex: 1; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); padding: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .arm-delete-btn { flex-shrink: 0; display: inline-flex; padding: 5px; border-radius: 7px; border: none; background: transparent; color: var(--ink-3); cursor: pointer; transition: all .15s; }
+        .arm-delete-btn:hover { background: var(--err-tint); color: var(--err); }
+        .arm-delete-btn svg { width: 15px; height: 15px; pointer-events: none; }
+
+        /* ─── Canvas ──────────────────────────────────────────── */
+        .canvas-shell { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line-2); background: #EDEBE3; }
+        #map-canvas { display: block; width: 100%; max-width: 100%; height: auto; cursor: crosshair; image-rendering: -webkit-optimize-contrast; }
+        #canvas-coords { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+        .canvas-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #EDEBE3; pointer-events: none; text-align: center; padding: 24px; }
+        .canvas-placeholder svg { width: 56px; height: 56px; color: var(--ink-3); margin-bottom: 16px; }
+        .canvas-placeholder .t1 { color: var(--ink-2); font-size: 14px; font-weight: 600; }
+        .canvas-placeholder .t2 { color: var(--ink-3); font-size: 12px; margin-top: 4px; }
+
+        /* ─── Collapsible result panels ───────────────────────── */
+        .collapse-head { width: 100%; display: flex; align-items: center; justify-content: space-between; background: none; border: none; padding: 0; cursor: pointer; color: var(--ink); }
+        .collapse-head .label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); }
+        .collapse-head .label svg { width: 15px; height: 15px; color: var(--clay); }
+        .collapse-head .chev { width: 16px; height: 16px; color: var(--ink-3); transition: transform .3s; }
+        .collapsible-content { max-height: 0; overflow: hidden; transition: max-height .4s ease; }
+        .collapsible-content.open { max-height: 1400px; }
+        .panel-empty { font-size: 12px; color: var(--ink-3); text-align: center; padding: 22px 0; font-style: italic; }
+        .result-img { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+
+        /* ─── Previous analyses table ─────────────────────────── */
+        #analyses-table { max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+        .analysis-run { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+        .run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 11px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+        .run-time { font-size: 11px; font-weight: 600; color: var(--ink); font-family: var(--mono); }
+        .run-badge { font-size: 10px; color: var(--ink-3); }
+        .ar-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; font-size: 12px; border-top: 1px solid var(--line); }
+        .ar-row:first-child { border-top: none; }
+        .ar-dot { width: 9px; height: 9px; border-radius: 999px; flex-shrink: 0; box-shadow: 0 0 0 2px var(--panel); }
+        .ar-name { flex: 1; min-width: 0; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ar-dir { font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0; }
+        .ar-cong { font-family: var(--mono); font-size: 11px; font-weight: 600; flex-shrink: 0; min-width: 34px; text-align: right; }
+        .ar-strip { display: flex; width: 54px; height: 9px; border-radius: 3px; overflow: hidden; flex-shrink: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.06); }
+        .ar-queue { font-family: var(--mono); font-size: 9px; color: var(--err); flex-shrink: 0; }
+        #json-output {
+            background: #2B2A26; color: #E8E5DC; border-radius: var(--radius-sm);
+            padding: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+            overflow: auto; max-height: 400px; border: 1px solid var(--line-2);
+        }
+
+        /* ─── JSON syntax highlight (warm palette) ────────────── */
+        .json-key { color: #E0A678; }
+        .json-string { color: #A8C49A; }
+        .json-number { color: #D9A05B; }
+        .json-boolean { color: #D98B7A; }
+        .json-null { color: #9C9A8F; }
+
+        /* ─── Toasts ──────────────────────────────────────────── */
+        #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 50; display: flex; flex-direction: column; gap: 12px; }
+        .toast {
+            min-width: 290px; max-width: 400px; display: flex; align-items: flex-start; gap: 11px;
+            background: var(--panel); border: 1px solid var(--line-2); border-left-width: 3px;
+            border-radius: var(--radius-sm); padding: 13px 14px; box-shadow: var(--shadow-lg);
+        }
+        .toast svg.ic { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; }
+        .toast p { flex: 1; margin: 0; font-size: 13px; color: var(--ink); line-height: 1.45; }
+        .toast .toast-close { flex-shrink: 0; background: none; border: none; padding: 2px; cursor: pointer; color: var(--ink-3); border-radius: 5px; }
+        .toast .toast-close:hover { color: var(--ink); background: var(--panel-2); }
+        .toast .toast-close svg { width: 15px; height: 15px; }
+        .toast--success { border-left-color: var(--ok); }       .toast--success .ic { color: var(--ok); }
+        .toast--error   { border-left-color: var(--err); }      .toast--error .ic   { color: var(--err); }
+        .toast--warning { border-left-color: var(--warn); }     .toast--warning .ic { color: var(--warn); }
+        .toast--info    { border-left-color: var(--clay); }     .toast--info .ic    { color: var(--clay); }
+        .toast-enter { animation: slide-up .32s cubic-bezier(.2,.8,.2,1); }
+        .toast-exit { animation: fade-out .24s ease-in forwards; }
+
+        /* ─── Context menu ────────────────────────────────────── */
+        #context-menu {
+            position: fixed; z-index: 50; min-width: 168px; padding: 5px;
+            background: var(--panel); border: 1px solid var(--line-2);
+            border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+        }
+        #ctx-delete-arm { width: 100%; display: flex; align-items: center; gap: 9px; text-align: left; background: none; border: none; padding: 8px 10px; border-radius: 7px; font-size: 13px; color: var(--err); cursor: pointer; }
+        #ctx-delete-arm:hover { background: var(--err-tint); }
+        #ctx-delete-arm svg { width: 15px; height: 15px; }
+
+        /* ─── Spinner ─────────────────────────────────────────── */
+        .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+        .btn-tonal .spinner { border-color: rgba(38,37,33,.25); border-top-color: var(--ink); }
+
+        /* ─── Scrollbar ───────────────────────────────────────── */
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 99px; border: 2px solid var(--paper); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+        /* ─── Animations ──────────────────────────────────────── */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fade-out { to { opacity: 0; transform: translateY(8px); } }
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slide-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes scale-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+        .animate-fade-in { animation: fade-in .4s ease-out both; }
+        .animate-slide-up { animation: slide-up .4s cubic-bezier(.2,.8,.2,1) both; }
+        .animate-scale-in { animation: scale-in .3s ease-out both; }
+
+        /* ─── Analysis history ────────────────────────────────── */
+        .hist-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+        .hist-filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+        .hist-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-2); font-weight: 500; }
+        .hist-field select { min-width: 150px; padding: 7px 28px 7px 10px; font-size: 13px; }
+        .hist-count { font-size: 11px; color: var(--ink-3); margin-bottom: 8px; font-family: var(--mono); }
+        .hist-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .hist-table th { text-align: left; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line-2); position: sticky; top: 0; background: var(--panel); }
+        .hist-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--ink); white-space: nowrap; }
+        .hist-table tbody tr:hover { background: var(--panel-2); }
+        .hist-table .mono { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+        #hist-table-wrap { max-height: 460px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+        .hist-chip { display: inline-flex; align-items: center; gap: 6px; }
+        .hist-chip .dot { width: 9px; height: 9px; border-radius: 999px; }
+        .hist-cong { font-family: var(--mono); font-weight: 600; }
+        .hist-q { font-family: var(--mono); font-size: 11px; color: var(--err); }
+
+        /* ─── Layout grid ─────────────────────────────────────── */
+        .shell { max-width: 1760px; margin: 0 auto; padding: 22px 24px; }
+        .grid { display: grid; grid-template-columns: 320px 1fr 340px; gap: 20px; align-items: start; }
+        .col { display: flex; flex-direction: column; gap: 18px; }
+        @media (max-width: 1180px) { .grid { grid-template-columns: 1fr; } }
+        /* ─── Profile Popover ────────────────────────────────── */
+        .user-profile-container {
+            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+            transition: background 0.2s;
+        }
+        .user-profile-container:hover {
+            background: var(--panel-2);
+        }
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--line);
+        }
+        .avatar-fallback {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--clay);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .user-info-brief {
+            display: flex;
+            flex-direction: column;
+        }
+        .user-name-display {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ink);
+        }
+        .user-popover {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            width: 240px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-4px);
+            transition: all 0.2s ease;
+            z-index: 100;
+        }
+        .user-profile-container:hover .user-popover {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .popover-content {
+            padding: 16px;
+            border-bottom: 1px solid var(--line);
+        }
+        .pop-text-main {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--ink);
+            margin-bottom: 4px;
+        }
+        .pop-text-sub {
+            font-size: 12px;
+            color: var(--ink-2);
+            line-height: 1.4;
+        }
+        .popover-footer {
+            padding: 12px 16px;
+            background: var(--panel-2);
+            border-radius: 0 0 var(--radius) var(--radius);
+        }
+        .btn-logout {
+            width: 100%;
+            text-align: center;
+            background: transparent;
+            border: 1px solid var(--line-2);
+            padding: 8px;
+            border-radius: var(--radius-sm);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--ink-2);
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--sans);
+        }
+        .btn-logout:hover {
+            background: white;
+            color: var(--err);
+            border-color: var(--err);
+        }
+        /* ─── Pulse Animation ────────────────────────────────── */
+        @keyframes pulse-green {
+            0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(90, 127, 98, 0.4); }
+            50% { opacity: .7; transform: scale(1.1); box-shadow: 0 0 0 4px rgba(90, 127, 98, 0); }
+        }
+        .animate-pulse-green {
+            background-color: var(--ok) !important;
+            animation: pulse-green 2s infinite;
+        }
+
+        /* ─── Navigation Bar ──────────────────────────────────── */
+        .nav-bar {
+            background: rgba(240,238,230,.95);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--line);
+            position: sticky; top: 61px; z-index: 38;
+        }
+        .nav-bar-inner {
+            max-width: 1760px; margin: 0 auto; padding: 0 24px;
+            display: flex; align-items: center; gap: 2px;
+        }
+        .nav-tab {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 11px 16px; font-size: 13px; font-weight: 600;
+            color: var(--ink-2); border: none; background: none; cursor: pointer;
+            border-bottom: 2px solid transparent; margin-bottom: -1px;
+            transition: color .18s, border-color .18s; font-family: var(--sans);
+            white-space: nowrap;
+        }
+        .nav-tab svg { width: 15px; height: 15px; }
+        .nav-tab:hover { color: var(--ink); }
+        .nav-tab.active { color: var(--clay); border-bottom-color: var(--clay); }
+
+        /* ─── Page sections ───────────────────────────────────── */
+        .page-section { min-height: calc(100vh - 120px); }
+        .page-header {
+            max-width: 1760px; margin: 0 auto; padding: 28px 24px 0;
+            display: flex; align-items: flex-end; justify-content: space-between;
+            gap: 16px; flex-wrap: wrap;
+        }
+        .page-title {
+            font-family: var(--serif); font-size: 28px; font-weight: 500;
+            color: var(--ink); margin: 0 0 4px; letter-spacing: -.01em;
+        }
+        .page-subtitle { font-size: 13px; color: var(--ink-3); margin: 0; }
+
+        /* ─── Weekly Updates grid & cards ─────────────────────── */
+        .weeks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px; padding: 24px;
+            max-width: 1760px; margin: 0 auto;
+        }
+        .week-card {
+            background: var(--panel); border: 1px solid var(--line);
+            border-radius: var(--radius); box-shadow: var(--shadow);
+            padding: 22px; display: flex; flex-direction: column; gap: 14px;
+            transition: box-shadow .22s, transform .22s; position: relative;
+            cursor: default;
+        }
+        .week-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+        .week-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+        .week-num-wrap { display: flex; flex-direction: column; }
+        .week-num-label { font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+        .week-number { font-family: var(--serif); font-size: 38px; font-weight: 500; color: var(--clay); line-height: 1; }
+        .week-date { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-top: 5px; }
+        .week-divider { height: 1px; background: var(--line); }
+        .week-title { font-size: 15px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+        .week-description { font-size: 13px; color: var(--ink-2); line-height: 1.65; }
+        .week-milestones { display: flex; flex-direction: column; gap: 7px; }
+        .milestones-label { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 3px; }
+        .milestone-item { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+        .milestone-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--clay); flex-shrink: 0; margin-top: 4px; }
+        .week-progress-section { display: flex; flex-direction: column; gap: 7px; }
+        .progress-label { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+        .progress-bar { height: 5px; background: var(--panel-2); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
+        .progress-fill { height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.2,.8,.2,1); background: var(--clay); }
+        .progress-fill.completed { background: var(--ok); }
+        .week-notes {
+            font-size: 12px; color: var(--ink-3); font-style: italic; line-height: 1.55;
+            border-left: 2px solid var(--line-2); padding-left: 10px;
+        }
+        .week-card-footer { display: flex; justify-content: flex-end; margin-top: auto; }
+        .btn-edit-week {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 7px 13px; border-radius: var(--radius-sm);
+            font-size: 12px; font-weight: 600; font-family: var(--sans);
+            background: var(--panel-2); border: 1px solid var(--line-2);
+            color: var(--ink-2); cursor: pointer; transition: all .18s;
+        }
+        .btn-edit-week:hover { background: var(--clay-tint); border-color: rgba(217,119,87,.35); color: var(--clay-hi); }
+        .btn-edit-week svg { width: 13px; height: 13px; }
+
+        /* Status badges */
+        .status-badge {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+            flex-shrink: 0; white-space: nowrap;
+        }
+        .status-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .7; }
+        .status-upcoming  { background: var(--panel-2); color: var(--ink-3); border: 1px solid var(--line); }
+        .status-in-progress { background: var(--clay-tint); color: var(--clay-hi); border: 1px solid rgba(217,119,87,.3); }
+        .status-completed { background: var(--ok-tint); color: var(--ok); border: 1px solid rgba(90,127,98,.3); }
+
+        /* ─── Admin Edit Modal ────────────────────────────────── */
+        .modal-backdrop {
+            position: fixed; inset: 0; background: rgba(38,37,33,.5);
+            z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px;
+            animation: fade-in .2s ease;
+        }
+        .modal-card {
+            background: var(--panel); border: 1px solid var(--line-2);
+            border-radius: var(--radius); box-shadow: var(--shadow-lg);
+            width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto;
+            animation: scale-in .22s ease-out both;
+        }
+        .modal-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 20px 24px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+            background: var(--panel); z-index: 1;
+        }
+        .modal-title { font-size: 16px; font-weight: 600; color: var(--ink); }
+        .modal-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+        .modal-footer {
+            padding: 16px 24px; border-top: 1px solid var(--line);
+            display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+            background: var(--panel-2); border-radius: 0 0 var(--radius) var(--radius);
+            position: sticky; bottom: 0;
+        }
+        .btn-close-modal {
+            background: none; border: none; padding: 5px; cursor: pointer;
+            color: var(--ink-3); border-radius: 7px; display: inline-flex; transition: all .15s;
+        }
+        .btn-close-modal:hover { background: var(--panel-2); color: var(--ink); }
+        .btn-close-modal svg { width: 20px; height: 20px; }
+        .milestone-input-row { display: flex; gap: 8px; align-items: center; }
+        .milestone-input-row input { flex: 1; }
+        .btn-remove-ms {
+            flex-shrink: 0; padding: 8px; border-radius: 7px; border: none;
+            background: transparent; color: var(--ink-3); cursor: pointer;
+            transition: all .15s; display: inline-flex;
+        }
+        .btn-remove-ms:hover { background: var(--err-tint); color: var(--err); }
+        .btn-remove-ms svg { width: 15px; height: 15px; pointer-events: none; }
+        .btn-add-milestone {
+            display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            padding: 9px 12px; border-radius: var(--radius-sm); width: 100%;
+            font-size: 12px; font-weight: 600; font-family: var(--sans);
+            background: var(--panel-2); border: 1px dashed var(--line-2);
+            color: var(--ink-3); cursor: pointer; transition: all .18s;
+        }
+        .btn-add-milestone:hover { color: var(--clay); border-color: var(--clay); background: var(--clay-tint); }
+        .btn-add-milestone svg { width: 14px; height: 14px; }
+        .weeks-view-banner {
+            display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+            background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+            font-size: 13px; color: var(--ink-2); margin: 0 24px;
+        }
+        .weeks-view-banner svg { width: 15px; height: 15px; color: var(--ink-3); flex-shrink: 0; }
+    </style>
+</head>
+<body>
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Header -->
+    <header class="topbar">
+        <div class="topbar-inner">
+            <div class="brand">
+                <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true">
+                    <path d="M19 12H5"/><path d="M18.06 15.5L5.94 8.5"/><path d="M15.5 18.06L8.5 5.94"/>
+                    <path d="M12 19V5"/><path d="M8.5 18.06L15.5 5.94"/><path d="M5.94 15.5L18.06 8.5"/>
+                </svg>
+                <div>
+                    <h1>Traffic Intersection Analyzer</h1>
+                    <p>Road configuration &amp; AI traffic analysis</p>
+                </div>
+            </div>
+            <!-- Mode Indicator & User Info -->
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div id="mode-indicator" class="mode-indicator">
+                    <span id="mode-dot" class="dot-online"></span>
+                    <span id="mode-label">Online</span>
+                </div>
+                <div style="height: 24px; width: 1px; background: var(--line);"></div>
+                <div class="user-profile-container">
+                    <img id="user-avatar" class="user-avatar" src="" alt="Profile" style="display:none;" />
+                    <div id="user-avatar-fallback" class="avatar-fallback">U</div>
+                    <div class="user-info-brief">
+                        <span id="user-name-display" class="user-name-display">Loading...</span>
+                        <span id="user-role-badge" style="font-size: 10px; font-weight: 700; color: var(--clay); letter-spacing: 0.05em; text-transform: uppercase;">ROLE</span>
+                    </div>
+                    
+                    <div class="user-popover">
+                        <div class="popover-content">
+                            <div id="pop-designation" class="pop-text-main"></div>
+                            <div id="pop-department" class="pop-text-sub"></div>
+                            <div id="pop-university" class="pop-text-sub"></div>
+                        </div>
+                        <div class="popover-footer">
+                            <button onclick="localStorage.removeItem('token'); window.location.href='/login.html'" class="btn-logout">Log Out</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Bar (teacher / admin only) -->
+    <nav id="main-nav" class="nav-bar hidden">
+        <div class="nav-bar-inner">
+            <button class="nav-tab active" data-page="home" onclick="navigateTo('home')">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                </svg>
+                Home
+            </button>
+            <button class="nav-tab" data-page="reports" onclick="navigateTo('reports')">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Reports
+            </button>
+            <button class="nav-tab" data-page="weekly-updates" onclick="navigateTo('weekly-updates')">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+                Weekly Update
+            </button>
+        </div>
+    </nav>
+
+<div id="page-home" class="page-section">
+    <!-- Main Layout -->
+    <main class="shell">
+        <div class="grid">
+
+            <!-- LEFT COLUMN — Controls -->
+            <div class="col">
+
+                <!-- Saved Configs Dropdown -->
+                <section class="card card-pad animate-fade-in">
+                    <h2 class="eyebrow">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                        Saved Configs
+                    </h2>
+                    <select id="config-select">
+                        <option value="__new__">+ New Intersection</option>
+                    </select>
+                </section>
+
+                <!-- Intersection Info -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:50ms">
+                    <h2 class="eyebrow">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Intersection Info
+                    </h2>
+                    <div style="display:flex;flex-direction:column;gap:13px;">
+                        <div>
+                            <label for="intersection-name" class="field-label">Name</label>
+                            <input type="text" id="intersection-name" placeholder="e.g. Shahbagh Square">
+                        </div>
+                        <div>
+                            <label for="intersection-id" class="field-label">ID</label>
+                            <input type="text" id="intersection-id" placeholder="e.g. shahbagh_01">
+                        </div>
+                        <div>
+                            <label for="intersection-country" class="field-label">Country</label>
+                            <select id="intersection-country">
+                                <option value="">Select a country…</option>
+                                <option value="BANGLADESH">Bangladesh</option>
+                                <option value="INDIA">India</option>
+                                <option value="THAILAND">Thailand</option>
+                                <option value="PHILIPPINES">Philippines</option>
+                                <option value="MALAYSIA">Malaysia</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="maps-url" class="field-label">Google Maps URL</label>
+                            <textarea id="maps-url" rows="3" placeholder="Paste Google Maps URL with traffic layer..."></textarea>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Action Buttons -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:100ms;display:flex;flex-direction:column;gap:10px;">
+                    <h2 class="eyebrow">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        Actions
+                    </h2>
+                    <button id="btn-capture" class="btn btn-primary">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        <span id="capture-text">Capture Screenshot</span>
+                        <span id="capture-spinner" class="spinner hidden"></span>
+                    </button>
+                    <button id="btn-save" class="btn btn-tonal">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                        <span id="save-text">Save Configuration</span>
+                        <span id="save-spinner" class="spinner hidden"></span>
+                    </button>
+                    <button id="btn-analyze" class="btn btn-dark">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        <span id="analyze-text">Run Analysis</span>
+                        <span id="analyze-spinner" class="spinner hidden"></span>
+                    </button>
+                </section>
+
+                <!-- Drawing Toolbar -->
+                <section id="section-drawing-tools" class="card card-pad animate-fade-in" style="animation-delay:150ms">
+                    <h2 class="eyebrow">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                        Drawing Tools
+                    </h2>
+                    <div class="seg">
+                        <button id="btn-mode-idle" data-mode="idle" class="mode-btn active">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"/></svg>
+                            Idle
+                        </button>
+                        <button id="btn-mode-arm" data-mode="draw-arm" class="mode-btn">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/></svg>
+                            Draw Arm
+                        </button>
+                    </div>
+                    <p id="mode-hint" class="mode-hint">Click a mode button, then interact with the canvas.</p>
+
+                    <!-- Draft (in-progress arm) controls -->
+                    <div id="draft-controls" class="draft-bar hidden">
+                        <span id="draft-status" class="status">0 points</span>
+                        <button id="btn-draft-finish" class="btn-mini finish">Finish</button>
+                        <button id="btn-draft-cancel" class="btn-mini cancel">Cancel</button>
+                    </div>
+                </section>
+
+                <!-- Arm List -->
+                <section id="section-arm-list" class="card card-pad animate-fade-in" style="animation-delay:200ms">
+                    <h2 class="eyebrow">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                        Arms (roads)
+                        <span id="arm-count" class="count">0 arms</span>
+                    </h2>
+                    <div id="arm-list">
+                        <p id="arm-empty" class="arm-empty">No roads drawn yet. Use "Draw Arm" to trace one.</p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- CENTER — Canvas -->
+            <div class="col">
+                <section class="card card-pad animate-scale-in">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:13px;">
+                        <h2 class="eyebrow" style="margin-bottom:0;">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            Canvas
+                        </h2>
+                        <span id="canvas-coords">—</span>
+                    </div>
+                    <div class="canvas-shell">
+                        <canvas id="map-canvas" width="1280" height="800"></canvas>
+                        <!-- Canvas empty state overlay -->
+                        <div id="canvas-placeholder" class="canvas-placeholder">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.25">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            <p class="t1">No screenshot captured</p>
+                            <p class="t2">Enter a Google Maps URL and click "Capture Screenshot"</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- RIGHT COLUMN — Results -->
+            <div class="col">
+
+                <!-- Analysis Results -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:100ms">
+                    <button id="toggle-results-img" class="collapse-head">
+                        <span class="label">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                            Annotated Result
+                        </span>
+                        <svg id="chevron-results-img" class="chev" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div id="results-img-content" class="collapsible-content open" style="margin-top:14px;">
+                        <div id="results-img-empty" class="panel-empty">
+                            Run analysis to see annotated output.
+                        </div>
+                        <img id="annotated-img" src="" alt="Annotated Result" class="result-img hidden">
+                    </div>
+                </section>
+
+                <!-- Previous Analyses -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:120ms">
+                    <button id="toggle-analyses" class="collapse-head">
+                        <span class="label">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Previous Analyses
+                        </span>
+                        <svg id="chevron-analyses" class="chev" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div id="analyses-content" class="collapsible-content open" style="margin-top:14px;">
+                        <div id="analyses-empty" class="panel-empty">
+                            Saved analyses for this intersection appear here.
+                        </div>
+                        <div id="analyses-table" class="hidden"></div>
+                    </div>
+                </section>
+
+                <!-- Original Screenshot -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:150ms">
+                    <button id="toggle-original-img" class="collapse-head">
+                        <span class="label">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            Original Capture
+                        </span>
+                        <svg id="chevron-original-img" class="chev rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div id="original-img-content" class="collapsible-content" style="margin-top:14px;">
+                        <div id="original-img-empty" class="panel-empty">
+                            No screenshot captured yet.
+                        </div>
+                        <img id="original-img" src="" alt="Original Screenshot" class="result-img hidden">
+                    </div>
+                </section>
+
+                <!-- JSON Results -->
+                <section class="card card-pad animate-fade-in" style="animation-delay:200ms">
+                    <button id="toggle-json" class="collapse-head">
+                        <span class="label">
+                            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+                            JSON Data
+                        </span>
+                        <svg id="chevron-json" class="chev rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div id="json-content" class="collapsible-content" style="margin-top:14px;">
+                        <div id="json-empty" class="panel-empty">
+                            Analysis data will appear here.
+                        </div>
+                        <pre id="json-output" class="hidden"></pre>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+    </main>
+</div><!-- /page-home -->
+
+<!-- ═══ Reports Page ═══════════════════════════════════════════════ -->
+<div id="page-reports" class="hidden page-section">
+    <div class="page-header">
+        <div>
+            <h2 class="page-title">Reports</h2>
+            <p class="page-subtitle">Complete analysis history across all intersections and time periods</p>
+        </div>
+    </div>
+    <div class="shell" style="padding-top:20px;">
+        <section class="card card-pad animate-fade-in">
+            <div class="hist-bar">
+                <h2 class="eyebrow" style="margin:0;">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M5 6h14a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"/></svg>
+                    Analysis History
+                </h2>
+                <div class="hist-filters">
+                    <label class="hist-field"><span>Country</span>
+                        <select id="hist-country">
+                            <option value="">All countries</option>
+                            <option value="BANGLADESH">Bangladesh</option>
+                            <option value="INDIA">India</option>
+                            <option value="THAILAND">Thailand</option>
+                            <option value="PHILIPPINES">Philippines</option>
+                            <option value="MALAYSIA">Malaysia</option>
+                        </select>
+                    </label>
+                    <label class="hist-field"><span>Intersection</span>
+                        <select id="hist-intersection"><option value="">All</option></select>
+                    </label>
+                    <label class="hist-field"><span>Interval</span>
+                        <select id="hist-days">
+                            <option value="1">Last 24 hours</option>
+                            <option value="7" selected>Last 7 days</option>
+                            <option value="30">Last 30 days</option>
+                            <option value="90">Last 90 days</option>
+                            <option value="0">All time</option>
+                        </select>
+                    </label>
+                    <button id="hist-refresh" class="btn-mini cancel" style="align-self:flex-end;">Refresh</button>
+                </div>
+            </div>
+            <div id="hist-empty" class="panel-empty">No analyses match these filters yet.</div>
+            <div id="hist-table-wrap" class="hidden">
+                <div class="hist-count" id="hist-count"></div>
+                <table class="hist-table">
+                    <thead><tr>
+                        <th>Time</th><th>Country</th><th>Intersection</th><th>Arm</th>
+                        <th>Signal</th><th>Cong.</th><th>Queue</th>
+                    </tr></thead>
+                    <tbody id="hist-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</div>
+
+<!-- ═══ Weekly Updates Page ════════════════════════════════════════ -->
+<div id="page-weekly-updates" class="hidden page-section">
+    <div class="page-header">
+        <div>
+            <h2 class="page-title">Weekly Updates</h2>
+            <p class="page-subtitle">12-week research timeline — CSE498R Traffic Intersection Analysis</p>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <span class="status-badge status-upcoming">Upcoming</span>
+            <span class="status-badge status-in-progress">In Progress</span>
+            <span class="status-badge status-completed">Completed</span>
+        </div>
+    </div>
+    <div id="weeks-view-mode-banner" class="weeks-view-banner hidden" style="margin-top:16px;">
+        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+        </svg>
+        You are viewing this page in read-only mode.
+    </div>
+    <div id="weeks-grid" class="weeks-grid">
+        <div style="grid-column:1/-1;text-align:center;padding:60px 0;color:var(--ink-3);font-style:italic;">
+            Loading weekly updates…
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Admin Edit Modal ═══════════════════════════════════════════ -->
+<div id="edit-modal" class="modal-backdrop hidden" onclick="if(event.target===this)closeEditModal()">
+    <div class="modal-card">
+        <div class="modal-header">
+            <span class="modal-title">Edit — Week <span id="modal-week-num"></span></span>
+            <button class="btn-close-modal" onclick="closeEditModal()" aria-label="Close">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <div>
+                <label class="field-label">Status</label>
+                <select id="edit-status">
+                    <option value="upcoming">Upcoming</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                </select>
+            </div>
+            <div>
+                <label class="field-label">Title / Focus Area</label>
+                <input type="text" id="edit-title" placeholder="e.g. Data Collection &amp; Baseline Setup">
+            </div>
+            <div>
+                <label class="field-label">Description</label>
+                <textarea id="edit-description" rows="3" placeholder="Brief summary of this week's activities and goals…"></textarea>
+            </div>
+            <div>
+                <label class="field-label" style="margin-bottom:10px;">Progress</label>
+                <div style="display:flex;align-items:center;gap:14px;">
+                    <input type="range" id="edit-progress" min="0" max="100" step="5" value="0"
+                           style="flex:1;accent-color:var(--clay);cursor:pointer;"
+                           oninput="document.getElementById('edit-progress-val').textContent=this.value+'%'">
+                    <span id="edit-progress-val" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--clay);min-width:38px;text-align:right;">0%</span>
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Milestones</label>
+                <div id="milestone-inputs" style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px;"></div>
+                <button class="btn-add-milestone" onclick="addMilestone()">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Add Milestone
+                </button>
+            </div>
+            <div>
+                <label class="field-label">Notes</label>
+                <textarea id="edit-notes" rows="2" placeholder="Additional context, blockers, or observations…"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-tonal" style="width:auto;padding:10px 22px;" onclick="closeEditModal()">Cancel</button>
+            <button id="btn-save-week" class="btn btn-primary" style="width:auto;padding:10px 22px;" onclick="saveWeekUpdate()">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+                </svg>
+                Save Changes
+            </button>
+        </div>
+    </div>
+</div>
+
+    <!-- Context Menu -->
+    <div id="context-menu" class="hidden animate-scale-in">
+        <button id="ctx-delete-arm">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            Delete Arm
+        </button>
+    </div>
+
+    <!-- ========================= JAVASCRIPT ========================= -->
+    <script>
+    (() => {
+        'use strict';
+
+        // ─── ARM COLORS (warm, earthy palette to match the theme) ──
+        const ARM_COLORS = [
+            '#D97757', '#3F7A6B', '#C99A3B', '#5B7FB0', '#B0563F',
+            '#7A8C4E', '#A9683F', '#4E8C8C', '#9C5B7A', '#6E6C64',
+            '#C77D52', '#557A99', '#8A7A3C', '#8C5BA9', '#B5483C'
+        ];
+        const DEFAULT_ARM_WIDTH = 3;   // on-map line width (px)
+
+        // Country enum token → display name (must match the DB Country enum).
+        const COUNTRY_NAMES = {
+            BANGLADESH: 'Bangladesh', INDIA: 'India', THAILAND: 'Thailand',
+            PHILIPPINES: 'Philippines', MALAYSIA: 'Malaysia',
+        };
+
+        // ─── MODEL ────────────────────────────────────────────────
+        // An "arm" is a directed road drawn as a multi-point polyline.
+        // points[0] is the "from" end, points[last] is the "toward" end —
+        // the drawing direction is the road's travel direction. There is
+        // no shared center point; each arm is a self-contained road.
+        const Model = {
+            mode: 'idle',             // 'idle' | 'draw-arm'
+            arms: [],                 // [{ id, name, points: [{x,y}, ...], color }]
+            draft: null,              // in-progress arm: { points: [{x,y}, ...], cursor: {x,y}|null }
+            screenshotSrc: null,      // image URL
+            screenshotImg: null,      // loaded Image object
+            hoveredArmId: null,
+            contextArmId: null,
+            nextArmId: 1,
+            analysisData: null,
+            annotatedImgSrc: null,
+            originalImgSrc: null,
+            configs: [],              // from server
+            intersections: [],        // DB intersections (for history filters)
+            currentConfigId: null,
+            loading: { capture: false, save: false, analyze: false },
+
+            addArm(points, name, opts = {}) {
+                const id = this.nextArmId++;
+                const color = opts.color || ARM_COLORS[(this.arms.length) % ARM_COLORS.length];
+                const arm = {
+                    id,
+                    name: name || `road_${id}`,
+                    points: points.map(p => ({ x: p.x, y: p.y })),
+                    color,
+                    width: opts.width || DEFAULT_ARM_WIDTH,
+                    visible: opts.visible !== false,   // default visible
+                };
+                this.arms.push(arm);
+                return arm;
+            },
+
+            updateArm(id, patch) {
+                const arm = this.arms.find(a => a.id === id);
+                if (arm) Object.assign(arm, patch);
+                return arm;
+            },
+
+            removeArm(id) {
+                this.arms = this.arms.filter(a => a.id !== id);
+            },
+
+            renameArm(id, name) {
+                const arm = this.arms.find(a => a.id === id);
+                if (arm) arm.name = name;
+            },
+
+            // ─── Draft (in-progress arm) ─────
+            startDraft() { this.draft = { points: [], cursor: null }; },
+            addDraftPoint(p) { if (this.draft) this.draft.points.push({ x: p.x, y: p.y }); },
+            popDraftPoint() { if (this.draft && this.draft.points.length) this.draft.points.pop(); },
+            cancelDraft() { this.draft = null; },
+            // Finalize the draft into a real arm. Needs >= 2 points.
+            commitDraft(name) {
+                if (!this.draft || this.draft.points.length < 2) return null;
+                const arm = this.addArm(this.draft.points, name);
+                this.draft = null;
+                return arm;
+            },
+
+            reset() {
+                this.arms = [];
+                this.draft = null;
+                this.nextArmId = 1;
+                this.screenshotSrc = null;
+                this.screenshotImg = null;
+                this.hoveredArmId = null;
+                this.contextArmId = null;
+                this.analysisData = null;
+                this.annotatedImgSrc = null;
+                this.originalImgSrc = null;
+                this.mode = 'idle';
+            },
+
+            toConfigPayload() {
+                const intName = document.getElementById('intersection-name').value.trim();
+                const intId = document.getElementById('intersection-id').value.trim();
+                const country = document.getElementById('intersection-country').value || null;
+                const url = document.getElementById('maps-url').value.trim();
+                return {
+                    intersection_id: intId,
+                    name: intName,
+                    country,
+                    google_maps_url: url,
+                    arms: this.arms.map(a => ({
+                        name: a.name,
+                        points: a.points.map(p => ({ x: p.x, y: p.y })),
+                        color: a.color,
+                        width: a.width,
+                        visible: a.visible
+                    }))
+                };
+            }
+        };
+
+        // ─── GEOMETRY HELPERS ─────────────────────────────────────
+        // Distance from point p to segment ab, plus the closest point.
+        function pointToSegment(p, a, b) {
+            const abx = b.x - a.x, aby = b.y - a.y;
+            const apx = p.x - a.x, apy = p.y - a.y;
+            const len2 = abx * abx + aby * aby;
+            let t = len2 > 0 ? (apx * abx + apy * aby) / len2 : 0;
+            t = Math.max(0, Math.min(1, t));
+            const cx = a.x + abx * t, cy = a.y + aby * t;
+            return Math.hypot(p.x - cx, p.y - cy);
+        }
+        // Min distance from point p to a polyline (array of points).
+        function distToPolyline(p, points) {
+            if (!points || points.length === 0) return Infinity;
+            if (points.length === 1) return Math.hypot(p.x - points[0].x, p.y - points[0].y);
+            let min = Infinity;
+            for (let i = 0; i < points.length - 1; i++) {
+                min = Math.min(min, pointToSegment(p, points[i], points[i + 1]));
+            }
+            return min;
+        }
+
+
+        // ─── VIEW ─────────────────────────────────────────────────
+        const View = {
+            // Elements cache
+            el: {},
+
+            init() {
+                // Cache DOM elements
+                const ids = [
+                    'map-canvas', 'canvas-placeholder', 'canvas-coords',
+                    'mode-indicator', 'mode-dot', 'mode-label', 'mode-hint',
+                    'config-select', 'intersection-name', 'intersection-id', 'intersection-country', 'maps-url',
+                    'btn-capture', 'capture-text', 'capture-spinner',
+                    'btn-save', 'save-text', 'save-spinner',
+                    'btn-analyze', 'analyze-text', 'analyze-spinner',
+                    'btn-mode-idle', 'btn-mode-arm',
+                    'draft-controls', 'draft-status', 'btn-draft-finish', 'btn-draft-cancel',
+                    'arm-list', 'arm-empty', 'arm-count',
+                    'annotated-img', 'results-img-empty', 'original-img', 'original-img-empty',
+                    'json-output', 'json-empty',
+                    'context-menu', 'ctx-delete-arm',
+                    'toast-container',
+                    'toggle-results-img', 'results-img-content', 'chevron-results-img',
+                    'toggle-analyses', 'analyses-content', 'chevron-analyses', 'analyses-empty', 'analyses-table',
+                    'toggle-original-img', 'original-img-content', 'chevron-original-img',
+                    'toggle-json', 'json-content', 'chevron-json',
+                    'hist-country', 'hist-intersection', 'hist-days', 'hist-refresh',
+                    'hist-empty', 'hist-table-wrap', 'hist-count', 'hist-tbody',
+                ];
+                ids.forEach(id => { this.el[id] = document.getElementById(id); });
+                this.canvas = this.el['map-canvas'];
+                this.ctx = this.canvas.getContext('2d');
+                
+                // Fetch user profile
+                fetch('/api/auth/me')
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data && data.user) {
+                            const u = data.user;
+                            const roleBadge = document.getElementById('user-role-badge');
+                            const nameDisplay = document.getElementById('user-name-display');
+                            const popDesignation = document.getElementById('pop-designation');
+                            const popDepartment = document.getElementById('pop-department');
+                            const popUniversity = document.getElementById('pop-university');
+                            const avatar = document.getElementById('user-avatar');
+                            const fallback = document.getElementById('user-avatar-fallback');
+
+                            if (roleBadge) roleBadge.textContent = u.role;
+                            if (nameDisplay) nameDisplay.textContent = u.name || u.email.split('@')[0];
+                            if (popDesignation) popDesignation.textContent = u.designation || 'No designation';
+                            if (popDepartment) popDepartment.textContent = u.department || '';
+                            if (popUniversity) popUniversity.textContent = u.university || '';
+
+                            // Reveal nav and expose role for the navigation system
+                            window._userRole = u.role;
+                            if (u.role === 'TEACHER' || u.role === 'ADMIN') {
+                                document.getElementById('main-nav').classList.remove('hidden');
+                            }
+                            if (u.role === 'TEACHER') {
+                                const banner = document.getElementById('weeks-view-mode-banner');
+                                if (banner) banner.classList.remove('hidden');
+                                // Hide drawing tools and arm list — teachers are view-only
+                                const drawingSection = document.getElementById('section-drawing-tools');
+                                const armSection = document.getElementById('section-arm-list');
+                                if (drawingSection) drawingSection.classList.add('hidden');
+                                if (armSection) armSection.classList.add('hidden');
+                            }
+
+                            if (u.photo_url) {
+                                avatar.src = u.photo_url;
+                                avatar.style.display = 'block';
+                                fallback.style.display = 'none';
+                            } else {
+                                avatar.style.display = 'none';
+                                fallback.style.display = 'flex';
+                                fallback.textContent = (u.name || u.email).charAt(0).toUpperCase();
+                            }
+                        }
+                    })
+                    .catch(err => console.error('Error fetching profile:', err));
+            },
+
+            // ─── Mode UI ─────────────────────
+            renderMode(mode) {
+                const modeMap = {
+                    'idle': { label: 'Idle', dot: 'dot-idle', hint: 'Click a mode button, then interact with the canvas.' },
+                    'draw-arm': { label: 'Draw Arm', dot: 'dot-draw', hint: 'Click along the road to add points (curves OK). Double-click or Enter to finish, Backspace to undo, Esc to cancel.' },
+                };
+                const m = modeMap[mode] || modeMap['idle'];
+                // Note: the header pill is a login/connection status ("Online"),
+                // not the drawing mode — so we don't touch mode-label/mode-dot here.
+                // Drawing mode is reflected by the toolbar buttons + this hint.
+                this.el['mode-hint'].textContent = m.hint;
+
+                // Draft controls only visible while drawing an arm
+                this.renderDraftControls();
+
+                // Highlight the active toolbar button
+                document.querySelectorAll('.mode-btn').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.mode === mode);
+                });
+            },
+
+            // ─── Draft controls visibility ────
+            renderDraftControls() {
+                const drawing = Model.mode === 'draw-arm' && Model.draft;
+                this.el['draft-controls'].classList.toggle('hidden', !drawing);
+                if (drawing) {
+                    const n = Model.draft.points.length;
+                    this.el['draft-status'].textContent = `${n} point${n !== 1 ? 's' : ''}` + (n < 2 ? ' (need ≥ 2)' : '');
+                    this.el['btn-draft-finish'].disabled = n < 2;
+                }
+            },
+
+            // Draw an arrowhead at point `tip` pointing along (dx, dy).
+            drawArrowhead(ctx, tip, dx, dy, color) {
+                const len = Math.hypot(dx, dy) || 1;
+                const ux = dx / len, uy = dy / len;
+                const size = 12;
+                const angle = Math.PI / 7;
+                const cos = Math.cos(angle), sin = Math.sin(angle);
+                // Rotate the reversed direction by ±angle to get the two barbs
+                const lx = -(ux * cos - uy * sin), ly = -(ux * sin + uy * cos);
+                const rx = -(ux * cos + uy * sin), ry = -(-ux * sin + uy * cos);
+                ctx.beginPath();
+                ctx.moveTo(tip.x, tip.y);
+                ctx.lineTo(tip.x + lx * size, tip.y + ly * size);
+                ctx.lineTo(tip.x + rx * size, tip.y + ry * size);
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.fill();
+            },
+
+            // ─── Canvas Drawing ───────────────
+            renderCanvas() {
+                const ctx = this.ctx;
+                const W = this.canvas.width;
+                const H = this.canvas.height;
+                ctx.clearRect(0, 0, W, H);
+
+                // Background image
+                if (Model.screenshotImg) {
+                    ctx.drawImage(Model.screenshotImg, 0, 0, W, H);
+                    this.el['canvas-placeholder'].classList.add('hidden');
+                } else {
+                    ctx.fillStyle = '#0f172a';
+                    ctx.fillRect(0, 0, W, H);
+                    this.el['canvas-placeholder'].classList.remove('hidden');
+                }
+
+                // Draw committed arms (directed polylines)
+                Model.arms.forEach(arm => {
+                    if (arm.visible === false) return;   // hidden via checkbox
+                    const isHovered = arm.id === Model.hoveredArmId;
+                    const pts = arm.points;
+                    if (!pts || pts.length < 2) return;
+                    const w = arm.width || DEFAULT_ARM_WIDTH;
+
+                    // Polyline
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                    ctx.strokeStyle = isHovered ? '#ffffff' : arm.color;
+                    ctx.lineWidth = isHovered ? w + 1.5 : w;
+                    ctx.lineJoin = 'round';
+                    ctx.lineCap = 'round';
+                    ctx.shadowColor = isHovered ? '#ffffff' : arm.color;
+                    ctx.shadowBlur = isHovered ? 12 : 6;
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+
+                    // Vertex dots
+                    pts.forEach((p, i) => {
+                        const isEnd = i === 0 || i === pts.length - 1;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, isEnd ? (isHovered ? 7 : 5) : 3.5, 0, Math.PI * 2);
+                        ctx.fillStyle = arm.color;
+                        ctx.fill();
+                        if (isEnd) {
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                        }
+                    });
+
+                    // Direction arrowhead at the "toward" end (last point)
+                    const a = pts[pts.length - 2], b = pts[pts.length - 1];
+                    this.drawArrowhead(ctx, b, b.x - a.x, b.y - a.y, isHovered ? '#ffffff' : arm.color);
+
+                    // "from" marker (small ring) at the first point
+                    ctx.beginPath();
+                    ctx.arc(pts[0].x, pts[0].y, 9, 0, Math.PI * 2);
+                    ctx.strokeStyle = (isHovered ? '#ffffff' : arm.color) + '70';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // Label near the "toward" end
+                    ctx.font = `${isHovered ? '600 ' : '500 '}13px 'Hanken Grotesk', system-ui, sans-serif`;
+                    const labelText = arm.name;
+                    const textMetrics = ctx.measureText(labelText);
+                    const tx = b.x + 12;
+                    const ty = b.y - 12;
+                    const padding = 4;
+                    ctx.fillStyle = 'rgba(38,37,33,0.88)';
+                    ctx.beginPath();
+                    ctx.roundRect(tx - padding, ty - 12 - padding, textMetrics.width + padding * 2, 16 + padding * 2, 4);
+                    ctx.fill();
+                    ctx.strokeStyle = arm.color + '80';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    ctx.fillStyle = isHovered ? '#ffffff' : arm.color;
+                    ctx.fillText(labelText, tx, ty);
+                });
+
+                // Draw the in-progress draft arm
+                if (Model.draft && Model.draft.points.length > 0) {
+                    const dpts = Model.draft.points;
+                    const draftColor = '#D97757';
+
+                    ctx.beginPath();
+                    ctx.moveTo(dpts[0].x, dpts[0].y);
+                    for (let i = 1; i < dpts.length; i++) ctx.lineTo(dpts[i].x, dpts[i].y);
+                    // Rubber-band to the cursor
+                    if (Model.draft.cursor) ctx.lineTo(Model.draft.cursor.x, Model.draft.cursor.y);
+                    ctx.strokeStyle = draftColor;
+                    ctx.lineWidth = 2.5;
+                    ctx.lineJoin = 'round';
+                    ctx.lineCap = 'round';
+                    ctx.setLineDash([6, 5]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    // Draft vertex dots
+                    dpts.forEach(p => {
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+                        ctx.fillStyle = draftColor;
+                        ctx.fill();
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                    });
+                }
+            },
+
+            // ─── Arm List ─────────────────────
+            renderArmList() {
+                const list = this.el['arm-list'];
+                const empty = this.el['arm-empty'];
+                const countEl = this.el['arm-count'];
+
+                countEl.textContent = `${Model.arms.length} arm${Model.arms.length !== 1 ? 's' : ''}`;
+
+                if (Model.arms.length === 0) {
+                    empty.classList.remove('hidden');
+                    // Remove all arm items
+                    list.querySelectorAll('.arm-item').forEach(el => el.remove());
+                    return;
+                }
+                empty.classList.add('hidden');
+
+                // Reconcile DOM
+                const existing = new Set();
+                list.querySelectorAll('.arm-item').forEach(el => {
+                    const id = parseInt(el.dataset.armId);
+                    if (!Model.arms.find(a => a.id === id)) {
+                        el.remove();
+                    } else {
+                        existing.add(id);
+                    }
+                });
+
+                Model.arms.forEach(arm => {
+                    const from = arm.points[0];
+                    const to = arm.points[arm.points.length - 1];
+                    const meta = `${arm.points.length}pts · (${from.x},${from.y})→(${to.x},${to.y})`;
+                    const w = arm.width || DEFAULT_ARM_WIDTH;
+                    let el = list.querySelector(`.arm-item[data-arm-id="${arm.id}"]`);
+                    if (!el) {
+                        el = document.createElement('div');
+                        el.className = 'arm-item animate-slide-up';
+                        el.dataset.armId = arm.id;
+                        el.innerHTML = `
+                            <div class="arm-row1">
+                                <input type="checkbox" class="arm-vis" data-arm-id="${arm.id}" ${arm.visible === false ? '' : 'checked'} title="Show on map">
+                                <input type="color" class="arm-color" data-arm-id="${arm.id}" value="${arm.color}" title="Arm color">
+                                <input type="text" value="${arm.name}" placeholder="road from … toward …" class="arm-name-input" data-arm-id="${arm.id}">
+                                <button class="arm-delete-btn" data-arm-id="${arm.id}" title="Delete arm">
+                                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                            <div class="arm-row2">
+                                <input type="range" class="arm-width" data-arm-id="${arm.id}" min="1" max="12" step="1" value="${w}" title="Line width">
+                                <span class="arm-width-val">${w}px</span>
+                                <span class="arm-meta">${meta}</span>
+                            </div>
+                        `;
+                        el.classList.toggle('highlighted', arm.id === Model.hoveredArmId);
+                        el.classList.toggle('arm-hidden', arm.visible === false);
+                        list.appendChild(el);
+                    } else {
+                        // Update meta line
+                        const metaSpan = el.querySelector('.arm-meta');
+                        if (metaSpan) metaSpan.textContent = meta;
+                        // Highlight / hidden state
+                        el.classList.toggle('highlighted', arm.id === Model.hoveredArmId);
+                        el.classList.toggle('arm-hidden', arm.visible === false);
+                    }
+                });
+            },
+
+            // ─── Config Dropdown ──────────────
+            renderConfigDropdown() {
+                const sel = this.el['config-select'];
+                const cur = sel.value;
+                sel.innerHTML = '<option value="__new__">+ New Intersection</option>';
+
+                // Group saved intersections by country so the team can scan them
+                // per country.
+                const groups = {};
+                Model.configs.forEach(c => {
+                    const key = c.country || '__none__';
+                    (groups[key] = groups[key] || []).push(c);
+                });
+                const order = Object.keys(groups).sort((a, b) => {
+                    if (a === '__none__') return 1;
+                    if (b === '__none__') return -1;
+                    return a.localeCompare(b);
+                });
+                order.forEach(key => {
+                    const og = document.createElement('optgroup');
+                    og.label = key === '__none__' ? 'Uncategorized' : (COUNTRY_NAMES[key] || key);
+                    groups[key]
+                        .sort((a, b) => (a.name || a.intersection_id).localeCompare(b.name || b.intersection_id))
+                        .forEach(c => {
+                            const opt = document.createElement('option');
+                            opt.value = c.intersection_id;
+                            opt.textContent = c.name || c.intersection_id;
+                            og.appendChild(opt);
+                        });
+                    sel.appendChild(og);
+                });
+                if (cur && sel.querySelector(`option[value="${cur}"]`)) sel.value = cur;
+            },
+
+            // ─── Results ──────────────────────
+            renderResults() {
+                // Annotated Image
+                if (Model.annotatedImgSrc) {
+                    this.el['annotated-img'].src = Model.annotatedImgSrc;
+                    this.el['annotated-img'].classList.remove('hidden');
+                    this.el['results-img-empty'].classList.add('hidden');
+                } else {
+                    this.el['annotated-img'].classList.add('hidden');
+                    this.el['results-img-empty'].classList.remove('hidden');
+                }
+
+                // Original Image
+                if (Model.originalImgSrc) {
+                    this.el['original-img'].src = Model.originalImgSrc;
+                    this.el['original-img'].classList.remove('hidden');
+                    this.el['original-img-empty'].classList.add('hidden');
+                } else {
+                    this.el['original-img'].classList.add('hidden');
+                    this.el['original-img-empty'].classList.remove('hidden');
+                }
+
+                // JSON
+                if (Model.analysisData) {
+                    this.el['json-output'].innerHTML = this.syntaxHighlightJSON(JSON.stringify(Model.analysisData, null, 2));
+                    this.el['json-output'].classList.remove('hidden');
+                    this.el['json-empty'].classList.add('hidden');
+                } else {
+                    this.el['json-output'].classList.add('hidden');
+                    this.el['json-empty'].classList.remove('hidden');
+                }
+            },
+
+            // ─── Previous Analyses table ──────
+            colorFor(dominant) {
+                return ({
+                    green: '#5E9B6B', yellow: '#D9A05B', red: '#C0563F',
+                    dark_red: '#7A2E25', none: '#C9C6BB'
+                })[dominant] || '#9C9A8F';
+            },
+
+            renderAnalyses(rows) {
+                const table = this.el['analyses-table'];
+                const empty = this.el['analyses-empty'];
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    table.classList.add('hidden');
+                    table.innerHTML = '';
+                    empty.classList.remove('hidden');
+                    return;
+                }
+                empty.classList.add('hidden');
+                table.classList.remove('hidden');
+
+                // Group rows into runs by observed_at (newest first; API already sorted).
+                const runs = [];
+                const byTime = new Map();
+                rows.forEach(r => {
+                    const key = r.observed_at;
+                    if (!byTime.has(key)) { byTime.set(key, []); runs.push(key); }
+                    byTime.get(key).push(r);
+                });
+
+                const fmtTime = (iso) => {
+                    const d = new Date(iso);
+                    return isNaN(d) ? String(iso) : d.toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                    });
+                };
+                const pct = (v) => v == null ? '—' : `${Math.round(Number(v) * 100)}%`;
+                // Mini start→signal colour strip from the stored profile.
+                const strip = (profile) => {
+                    if (!Array.isArray(profile) || !profile.length) return '';
+                    const cells = profile
+                        .slice().sort((a, b) => (a.index ?? a.pos) - (b.index ?? b.pos))
+                        .map(b => `<span style="flex:1;background:${this.colorFor(b.dominant_color)}"></span>`).join('');
+                    return `<div class="ar-strip" title="start → signal (left → right)">${cells}</div>`;
+                };
+
+                table.innerHTML = runs.map(key => {
+                    const items = byTime.get(key);
+                    const rowsHtml = items.map(r => {
+                        const label = (r.arm_label || 'arm') + '';
+                        // Prefer the stop-line signal reading (falls back to end, then whole-line).
+                        const sigColor = r.signal_dominant_color || r.end_dominant_color || r.dominant_color;
+                        const sigCong = r.signal_congestion_score != null ? r.signal_congestion_score
+                                      : (r.end_congestion_score != null ? r.end_congestion_score : r.congestion_score);
+                        const q = Number(r.red_queue_frac || 0);
+                        const qBadge = q > 0 ? `<span class="ar-queue" title="red queue before signal">▮${Math.round(q*100)}%</span>` : '';
+                        return `<div class="ar-row">
+                            <span class="ar-dot" style="background:${this.colorFor(sigColor)}" title="signal colour"></span>
+                            <span class="ar-name" title="${label}">${label}</span>
+                            ${strip(r.profile)}
+                            ${qBadge}
+                            <span class="ar-cong" style="color:${this.colorFor(sigColor)}" title="signal congestion">${pct(sigCong)}</span>
+                        </div>`;
+                    }).join('');
+                    return `<div class="analysis-run">
+                        <div class="run-head"><span class="run-time">${fmtTime(key)}</span><span class="run-badge">${items.length} reading${items.length !== 1 ? 's' : ''}</span></div>
+                        ${rowsHtml}
+                    </div>`;
+                }).join('');
+            },
+
+            // ─── Analysis History table ───────
+            renderHistory(rows) {
+                const wrap = this.el['hist-table-wrap'];
+                const empty = this.el['hist-empty'];
+                const tbody = this.el['hist-tbody'];
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    wrap.classList.add('hidden');
+                    empty.classList.remove('hidden');
+                    tbody.innerHTML = '';
+                    return;
+                }
+                empty.classList.add('hidden');
+                wrap.classList.remove('hidden');
+                this.el['hist-count'].textContent = `${rows.length} reading${rows.length !== 1 ? 's' : ''}`;
+
+                const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                const pct = (v) => v == null ? '—' : `${Math.round(Number(v) * 100)}%`;
+                const fmt = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+
+                tbody.innerHTML = rows.map(r => {
+                    const sigColor = r.signal_dominant_color || r.dominant_color;
+                    const sigCong = r.signal_congestion_score != null ? r.signal_congestion_score
+                                  : (r.end_congestion_score != null ? r.end_congestion_score : r.congestion_score);
+                    const q = Number(r.red_queue_frac || 0);
+                    return `<tr>
+                        <td class="mono">${fmt(r.observed_at)}</td>
+                        <td>${COUNTRY_NAMES[r.country] || '—'}</td>
+                        <td>${esc(r.intersection_name)}</td>
+                        <td>${esc(r.arm_label || '—')}</td>
+                        <td><span class="hist-chip"><span class="dot" style="background:${this.colorFor(sigColor)}"></span>${sigColor || '—'}</span></td>
+                        <td class="hist-cong" style="color:${this.colorFor(sigColor)}">${pct(sigCong)}</td>
+                        <td class="hist-q">${q > 0 ? Math.round(q * 100) + '%' : '—'}</td>
+                    </tr>`;
+                }).join('');
+            },
+
+            // Populate the history intersection filter, optionally scoped to a country.
+            renderHistIntersectionFilter(intersections, country) {
+                const sel = this.el['hist-intersection'];
+                const cur = sel.value;
+                const list = (intersections || []).filter(i => !country || i.country === country);
+                sel.innerHTML = '<option value="">All</option>' +
+                    list.map(i => `<option value="${i.id}">${(i.name || i.id)}</option>`).join('');
+                if (cur && sel.querySelector(`option[value="${cur}"]`)) sel.value = cur;
+            },
+
+            syntaxHighlightJSON(json) {
+                return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+                    let cls = 'json-number';
+                    if (/^"/.test(match)) {
+                        if (/:$/.test(match)) {
+                            cls = 'json-key';
+                        } else {
+                            cls = 'json-string';
+                        }
+                    } else if (/true|false/.test(match)) {
+                        cls = 'json-boolean';
+                    } else if (/null/.test(match)) {
+                        cls = 'json-null';
+                    }
+                    return `<span class="${cls}">${match}</span>`;
+                });
+            },
+
+            // ─── Loading States ───────────────
+            setLoading(button, isLoading) {
+                const map = {
+                    capture: { btn: 'btn-capture', text: 'capture-text', spinner: 'capture-spinner', label: 'Capture Screenshot', loadingLabel: 'Capturing...' },
+                    save: { btn: 'btn-save', text: 'save-text', spinner: 'save-spinner', label: 'Save Configuration', loadingLabel: 'Saving...' },
+                    analyze: { btn: 'btn-analyze', text: 'analyze-text', spinner: 'analyze-spinner', label: 'Run Analysis', loadingLabel: 'Analyzing...' },
+                };
+                const m = map[button];
+                if (!m) return;
+                this.el[m.text].textContent = isLoading ? m.loadingLabel : m.label;
+                this.el[m.spinner].classList.toggle('hidden', !isLoading);
+                this.el[m.btn].disabled = isLoading;
+                this.el[m.btn].classList.toggle('opacity-60', isLoading);
+                this.el[m.btn].classList.toggle('pointer-events-none', isLoading);
+            },
+
+            // ─── Toast Notifications ──────────
+            showToast(message, type = 'success') {
+                const container = this.el['toast-container'];
+                const toast = document.createElement('div');
+                const icons = {
+                    success: '<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>',
+                    error: '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>',
+                    info: '<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>',
+                    warning: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>',
+                };
+
+                toast.className = `toast toast-enter toast--${type}`;
+                toast.innerHTML = `
+                    <svg class="ic" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">${icons[type] || icons.info}</svg>
+                    <p>${message}</p>
+                    <button class="toast-close" aria-label="Dismiss">
+                        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                `;
+                container.appendChild(toast);
+                toast.querySelector('.toast-close').addEventListener('click', () => dismissToast(toast));
+
+                const autoRemove = setTimeout(() => dismissToast(toast), 4000);
+
+                function dismissToast(t) {
+                    clearTimeout(autoRemove);
+                    t.classList.remove('toast-enter');
+                    t.classList.add('toast-exit');
+                    setTimeout(() => t.remove(), 300);
+                }
+            },
+
+            // ─── Context Menu ─────────────────
+            showContextMenu(x, y) {
+                const menu = this.el['context-menu'];
+                menu.style.left = `${x}px`;
+                menu.style.top = `${y}px`;
+                menu.classList.remove('hidden');
+            },
+            hideContextMenu() {
+                this.el['context-menu'].classList.add('hidden');
+            },
+
+            // ─── Collapsible toggle ───────────
+            toggleCollapsible(contentEl, chevronEl) {
+                contentEl.classList.toggle('open');
+                chevronEl.classList.toggle('rotate-180');
+            },
+
+            // ─── Coordinates display ──────────
+            showCoords(x, y) {
+                this.el['canvas-coords'].textContent = `${x}, ${y}`;
+            },
+            hideCoords() {
+                this.el['canvas-coords'].textContent = '—';
+            }
+        };
+
+
+        // ─── CONTROLLER ──────────────────────────────────────────
+        const Controller = {
+
+            init() {
+                View.init();
+                this.bindEvents();
+                this.loadConfigs();
+                this.loadIntersections();
+                this.loadHistory();
+                View.renderMode(Model.mode);
+                View.renderCanvas();
+                View.renderArmList();
+                View.renderResults();
+                // Expose for cross-script access
+                window._controller = this;
+                window._showToast = (msg, type) => View.showToast(msg, type);
+            },
+
+            bindEvents() {
+                // Mode buttons
+                document.querySelectorAll('.mode-btn').forEach(btn => {
+                    btn.addEventListener('click', () => this.setMode(btn.dataset.mode));
+                });
+
+                // Draft controls
+                View.el['btn-draft-finish'].addEventListener('click', () => this.finishDraft());
+                View.el['btn-draft-cancel'].addEventListener('click', () => this.cancelDraftArm());
+
+                // Canvas click
+                View.canvas.addEventListener('click', (e) => this.handleCanvasClick(e));
+                View.canvas.addEventListener('dblclick', (e) => this.handleCanvasDblClick(e));
+                View.canvas.addEventListener('mousemove', (e) => this.handleCanvasMouseMove(e));
+                View.canvas.addEventListener('mouseleave', () => {
+                    Model.hoveredArmId = null;
+                    if (Model.draft) { Model.draft.cursor = null; }
+                    View.renderCanvas();
+                    View.renderArmList();
+                    View.hideCoords();
+                });
+
+                // Canvas right-click
+                View.canvas.addEventListener('contextmenu', (e) => this.handleCanvasRightClick(e));
+
+                // Context menu delete
+                View.el['ctx-delete-arm'].addEventListener('click', () => {
+                    if (Model.contextArmId !== null) {
+                        Model.removeArm(Model.contextArmId);
+                        Model.contextArmId = null;
+                        View.hideContextMenu();
+                        View.renderCanvas();
+                        View.renderArmList();
+                        View.showToast('Arm deleted', 'info');
+                    }
+                });
+
+                // Hide context menu on click elsewhere
+                document.addEventListener('click', (e) => {
+                    if (!View.el['context-menu'].contains(e.target)) {
+                        View.hideContextMenu();
+                    }
+                });
+
+                // Keyboard
+                document.addEventListener('keydown', (e) => {
+                    const inField = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
+
+                    // Enter finishes the in-progress arm
+                    if (e.key === 'Enter' && Model.draft && !inField) {
+                        e.preventDefault();
+                        this.finishDraft();
+                        return;
+                    }
+
+                    if (e.key === 'Delete' || e.key === 'Backspace') {
+                        if (inField) return;
+                        // While drawing, Backspace undoes the last draft point
+                        if (Model.draft) {
+                            e.preventDefault();
+                            Model.popDraftPoint();
+                            View.renderCanvas();
+                            View.renderDraftControls();
+                            return;
+                        }
+                        // Otherwise delete the hovered arm
+                        if (Model.hoveredArmId !== null) {
+                            Model.removeArm(Model.hoveredArmId);
+                            Model.hoveredArmId = null;
+                            View.renderCanvas();
+                            View.renderArmList();
+                            View.showToast('Arm deleted', 'info');
+                        }
+                    }
+                    // Escape cancels the draft, else goes idle
+                    if (e.key === 'Escape') {
+                        if (Model.draft) {
+                            this.cancelDraftArm();
+                        } else {
+                            this.setMode('idle');
+                        }
+                        View.hideContextMenu();
+                    }
+                });
+
+                // Arm list delegation — name / color / width (live, no full re-render)
+                View.el['arm-list'].addEventListener('input', (e) => {
+                    const id = parseInt(e.target.dataset.armId);
+                    if (e.target.classList.contains('arm-name-input')) {
+                        Model.renameArm(id, e.target.value);
+                        View.renderCanvas();
+                    } else if (e.target.classList.contains('arm-color')) {
+                        Model.updateArm(id, { color: e.target.value });
+                        View.renderCanvas();
+                    } else if (e.target.classList.contains('arm-width')) {
+                        const width = parseInt(e.target.value, 10);
+                        Model.updateArm(id, { width });
+                        const label = e.target.parentElement.querySelector('.arm-width-val');
+                        if (label) label.textContent = `${width}px`;
+                        View.renderCanvas();
+                    }
+                });
+                // Visibility checkbox
+                View.el['arm-list'].addEventListener('change', (e) => {
+                    if (e.target.classList.contains('arm-vis')) {
+                        const id = parseInt(e.target.dataset.armId);
+                        Model.updateArm(id, { visible: e.target.checked });
+                        e.target.closest('.arm-item').classList.toggle('arm-hidden', !e.target.checked);
+                        View.renderCanvas();
+                    }
+                });
+                View.el['arm-list'].addEventListener('click', (e) => {
+                    const deleteBtn = e.target.closest('.arm-delete-btn');
+                    if (deleteBtn) {
+                        const id = parseInt(deleteBtn.dataset.armId);
+                        Model.removeArm(id);
+                        View.renderCanvas();
+                        View.renderArmList();
+                        View.showToast('Arm deleted', 'info');
+                    }
+                });
+                // Arm hover in list
+                View.el['arm-list'].addEventListener('mouseenter', (e) => {
+                    const item = e.target.closest('.arm-item');
+                    if (item) {
+                        Model.hoveredArmId = parseInt(item.dataset.armId);
+                        View.renderCanvas();
+                        View.renderArmList();
+                    }
+                }, true);
+                View.el['arm-list'].addEventListener('mouseleave', (e) => {
+                    const item = e.target.closest('.arm-item');
+                    if (item) {
+                        Model.hoveredArmId = null;
+                        View.renderCanvas();
+                        View.renderArmList();
+                    }
+                }, true);
+
+                // Action buttons
+                View.el['btn-capture'].addEventListener('click', () => this.captureScreenshot());
+                View.el['btn-save'].addEventListener('click', () => this.saveConfig());
+                View.el['btn-analyze'].addEventListener('click', () => this.runAnalysis());
+
+                // Config select
+                View.el['config-select'].addEventListener('change', (e) => this.handleConfigSelect(e.target.value));
+
+                // History filters
+                View.el['hist-country'].addEventListener('change', () => {
+                    // Re-scope the intersection filter to the chosen country, then reload.
+                    View.el['hist-intersection'].value = '';
+                    View.renderHistIntersectionFilter(Model.intersections, View.el['hist-country'].value);
+                    this.loadHistory();
+                });
+                View.el['hist-intersection'].addEventListener('change', () => this.loadHistory());
+                View.el['hist-days'].addEventListener('change', () => this.loadHistory());
+                View.el['hist-refresh'].addEventListener('click', () => { this.loadIntersections(); this.loadHistory(); });
+
+                // Collapsible sections
+                View.el['toggle-results-img'].addEventListener('click', () => {
+                    View.toggleCollapsible(View.el['results-img-content'], View.el['chevron-results-img']);
+                });
+                View.el['toggle-analyses'].addEventListener('click', () => {
+                    View.toggleCollapsible(View.el['analyses-content'], View.el['chevron-analyses']);
+                });
+                View.el['toggle-original-img'].addEventListener('click', () => {
+                    View.toggleCollapsible(View.el['original-img-content'], View.el['chevron-original-img']);
+                });
+                View.el['toggle-json'].addEventListener('click', () => {
+                    View.toggleCollapsible(View.el['json-content'], View.el['chevron-json']);
+                });
+            },
+
+            // ─── Canvas Coordinate Conversion ─
+            canvasCoords(e) {
+                const rect = View.canvas.getBoundingClientRect();
+                const scaleX = View.canvas.width / rect.width;
+                const scaleY = View.canvas.height / rect.height;
+                const x = Math.round((e.clientX - rect.left) * scaleX);
+                const y = Math.round((e.clientY - rect.top) * scaleY);
+                return { x, y };
+            },
+
+            // ─── Mode switching ───────────────
+            setMode(mode) {
+                // Leaving draw mode discards an unfinished draft
+                if (Model.mode === 'draw-arm' && mode !== 'draw-arm' && Model.draft) {
+                    Model.cancelDraft();
+                }
+                Model.mode = mode;
+                if (mode === 'draw-arm' && !Model.draft) {
+                    Model.startDraft();
+                }
+                View.renderMode(Model.mode);
+                View.renderCanvas();
+            },
+
+            // Find the arm whose polyline is closest to (x, y), within threshold.
+            armNear(x, y, threshold = 18) {
+                let closest = null, minDist = Infinity;
+                Model.arms.forEach(arm => {
+                    if (arm.visible === false) return;   // can't pick a hidden arm
+                    const d = distToPolyline({ x, y }, arm.points);
+                    if (d < minDist) { minDist = d; closest = arm; }
+                });
+                return (closest && minDist <= threshold) ? closest : null;
+            },
+
+            // ─── Draft lifecycle ──────────────
+            finishDraft() {
+                if (!Model.draft || Model.draft.points.length < 2) {
+                    View.showToast('An arm needs at least 2 points.', 'warning');
+                    return;
+                }
+                const arm = Model.commitDraft();
+                // Start a fresh draft so the user can keep adding arms
+                Model.startDraft();
+                View.renderCanvas();
+                View.renderArmList();
+                View.renderDraftControls();
+                View.showToast(`Arm "${arm.name}" added — name it in the Arms list.`, 'success');
+                // Auto-focus the new arm's name input for quick naming
+                requestAnimationFrame(() => {
+                    const input = View.el['arm-list'].querySelector(`.arm-name-input[data-arm-id="${arm.id}"]`);
+                    if (input) { input.focus(); input.select(); }
+                });
+            },
+
+            cancelDraftArm() {
+                Model.cancelDraft();
+                Model.mode = 'idle';
+                View.renderMode(Model.mode);
+                View.renderCanvas();
+            },
+
+            // ─── Canvas Click Handler ─────────
+            handleCanvasClick(e) {
+                const { x, y } = this.canvasCoords(e);
+                if (Model.mode === 'draw-arm') {
+                    if (!Model.draft) Model.startDraft();
+                    Model.addDraftPoint({ x, y });
+                    View.renderCanvas();
+                    View.renderDraftControls();
+                }
+            },
+
+            // ─── Canvas Double-Click ──────────
+            // Double-click finishes the current arm. The browser fires two
+            // single-clicks before dblclick, so drop the duplicate point first.
+            handleCanvasDblClick(e) {
+                if (Model.mode === 'draw-arm' && Model.draft) {
+                    e.preventDefault();
+                    Model.popDraftPoint();
+                    this.finishDraft();
+                }
+            },
+
+            // ─── Canvas Mouse Move ────────────
+            handleCanvasMouseMove(e) {
+                const { x, y } = this.canvasCoords(e);
+                View.showCoords(x, y);
+
+                // Rubber-band preview while drawing
+                if (Model.mode === 'draw-arm' && Model.draft) {
+                    Model.draft.cursor = { x, y };
+                    View.renderCanvas();
+                    View.canvas.style.cursor = 'crosshair';
+                    return;
+                }
+
+                // Hover detection on committed arms
+                if (Model.arms.length > 0) {
+                    const near = this.armNear(x, y);
+                    const prevHovered = Model.hoveredArmId;
+                    Model.hoveredArmId = near ? near.id : null;
+                    if (prevHovered !== Model.hoveredArmId) {
+                        View.renderCanvas();
+                        View.renderArmList();
+                    }
+                }
+
+                View.canvas.style.cursor = Model.hoveredArmId ? 'pointer' : 'default';
+            },
+
+            // ─── Canvas Right-Click ───────────
+            handleCanvasRightClick(e) {
+                e.preventDefault();
+                const { x, y } = this.canvasCoords(e);
+                const near = this.armNear(x, y);
+                if (near) {
+                    Model.contextArmId = near.id;
+                    View.showContextMenu(e.clientX, e.clientY);
+                } else {
+                    View.hideContextMenu();
+                }
+            },
+
+            // ─── Load Screenshot to Canvas ────
+            loadImageToCanvas(src) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        Model.screenshotImg = img;
+                        Model.screenshotSrc = src;
+                        View.renderCanvas();
+                        resolve();
+                    };
+                    img.onerror = () => reject(new Error('Failed to load image'));
+                    img.src = src + '?t=' + Date.now();
+                });
+            },
+
+            // ─── API: Capture Screenshot ──────
+            async captureScreenshot() {
+                const url = View.el['maps-url'].value.trim();
+                const intersectionId = View.el['intersection-id'].value.trim();
+                if (!url) { View.showToast('Please enter a Google Maps URL.', 'warning'); return; }
+                if (!intersectionId) { View.showToast('Please enter an intersection ID.', 'warning'); return; }
+
+                Model.loading.capture = true;
+                View.setLoading('capture', true);
+
+                try {
+                    const res = await fetch('/api/capture', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url, intersection_id: intersectionId })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || 'Capture failed');
+
+                    await this.loadImageToCanvas(data.image);
+                    Model.originalImgSrc = data.image + '?t=' + Date.now();
+                    View.renderResults();
+                    View.showToast('Screenshot captured successfully!', 'success');
+
+                    // Auto-switch to Draw Arm so the user can start tracing roads
+                    if (Model.arms.length === 0) {
+                        this.setMode('draw-arm');
+                    }
+                } catch (err) {
+                    View.showToast(`Capture failed: ${err.message}`, 'error');
+                } finally {
+                    Model.loading.capture = false;
+                    View.setLoading('capture', false);
+                }
+            },
+
+            // ─── API: Save Configuration ──────
+            async saveConfig() {
+                const payload = Model.toConfigPayload();
+                if (!payload.intersection_id) { View.showToast('Please enter an intersection ID.', 'warning'); return; }
+                if (!payload.name) { View.showToast('Please enter an intersection name.', 'warning'); return; }
+                if (!payload.country) { View.showToast('Please select a country.', 'warning'); return; }
+                if (Model.arms.length === 0) { View.showToast('Please draw at least one arm (road).', 'warning'); return; }
+
+                Model.loading.save = true;
+                View.setLoading('save', true);
+
+                try {
+                    const res = await fetch('/api/save-config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+
+                    View.showToast('Configuration saved successfully!', 'success');
+                    await this.loadConfigs();
+                    this.loadIntersections();   // refresh history filters with the new/updated intersection
+                    // Set dropdown to current config
+                    View.el['config-select'].value = payload.intersection_id;
+                } catch (err) {
+                    View.showToast(`Save failed: ${err.message}`, 'error');
+                } finally {
+                    Model.loading.save = false;
+                    View.setLoading('save', false);
+                }
+            },
+
+            // ─── API: Run Analysis ────────────
+            async runAnalysis() {
+                const intersectionId = View.el['intersection-id'].value.trim();
+                if (!intersectionId) { View.showToast('Please enter an intersection ID.', 'warning'); return; }
+
+                Model.loading.analyze = true;
+                View.setLoading('analyze', true);
+
+                try {
+                    const res = await fetch('/api/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ intersection_id: intersectionId })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || 'Analysis failed');
+
+                    const ts = Date.now();
+                    Model.analysisData = data.data;
+                    Model.annotatedImgSrc = data.annotatedImage + '?t=' + ts;
+                    Model.originalImgSrc = data.originalImage + '?t=' + ts;
+                    View.renderResults();
+
+                    // Open results panel if collapsed
+                    if (!View.el['results-img-content'].classList.contains('open')) {
+                        View.toggleCollapsible(View.el['results-img-content'], View.el['chevron-results-img']);
+                    }
+                    if (!View.el['json-content'].classList.contains('open')) {
+                        View.toggleCollapsible(View.el['json-content'], View.el['chevron-json']);
+                    }
+
+                    // Refresh the stored-analyses table + the global history.
+                    await this.fetchAnalyses(intersectionId);
+                    this.loadHistory();
+
+                    View.showToast(
+                        data.freshCapture ? 'Analysis complete (live re-capture).' : 'Analysis complete!',
+                        'success'
+                    );
+                } catch (err) {
+                    View.showToast(`Analysis failed: ${err.message}`, 'error');
+                } finally {
+                    Model.loading.analyze = false;
+                    View.setLoading('analyze', false);
+                }
+            },
+
+            // ─── API: Load Configs ────────────
+            async loadConfigs() {
+                try {
+                    const res = await fetch('/api/configs');
+                    const data = await res.json();
+                    Model.configs = Array.isArray(data) ? data : [];
+                    View.renderConfigDropdown();
+                } catch (err) {
+                    console.warn('Could not load configs:', err);
+                }
+            },
+
+            // ─── API: Intersections (for history filters) ──
+            async loadIntersections() {
+                try {
+                    const res = await fetch('/api/intersections');
+                    const data = await res.json();
+                    Model.intersections = Array.isArray(data) ? data : [];
+                    View.renderHistIntersectionFilter(Model.intersections, View.el['hist-country'].value);
+                } catch (err) {
+                    console.warn('Could not load intersections:', err);
+                }
+            },
+
+            // ─── API: Filtered analysis history ──
+            async loadHistory() {
+                try {
+                    const params = new URLSearchParams();
+                    const country = View.el['hist-country'].value;
+                    const intersection = View.el['hist-intersection'].value;
+                    const days = View.el['hist-days'].value;
+                    if (country) params.set('country', country);
+                    if (intersection) params.set('intersection_id', intersection);
+                    if (days) params.set('days', days);
+                    const res = await fetch('/api/history?' + params.toString());
+                    const rows = await res.json();
+                    View.renderHistory(Array.isArray(rows) ? rows : []);
+                } catch (err) {
+                    console.warn('Could not load history:', err);
+                    View.renderHistory([]);
+                }
+            },
+
+            // ─── API: Previous analyses ───────
+            async fetchAnalyses(intersectionId) {
+                if (!intersectionId) { View.renderAnalyses([]); return; }
+                try {
+                    const res = await fetch(`/api/analyses/${encodeURIComponent(intersectionId)}`);
+                    const rows = await res.json();
+                    View.renderAnalyses(Array.isArray(rows) ? rows : []);
+                } catch (err) {
+                    console.warn('Could not load analyses:', err);
+                    View.renderAnalyses([]);
+                }
+            },
+
+            // ─── Handle Config Selection ──────
+            async handleConfigSelect(value) {
+                if (value === '__new__') {
+                    Model.reset();
+                    View.el['intersection-name'].value = '';
+                    View.el['intersection-id'].value = '';
+                    View.el['intersection-country'].value = '';
+                    View.el['maps-url'].value = '';
+                    View.renderMode(Model.mode);
+                    View.renderCanvas();
+                    View.renderArmList();
+                    View.renderResults();
+                    View.renderAnalyses([]);
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/api/config/${value}`);
+                    const config = await res.json();
+                    if (!config || config.error) throw new Error(config.error || 'Config not found');
+
+                    Model.reset();
+                    View.el['intersection-name'].value = config.name || '';
+                    View.el['intersection-id'].value = config.intersection_id || value;
+                    View.el['intersection-country'].value = config.country || '';
+                    View.el['maps-url'].value = config.google_maps_url || '';
+
+                    // Load arms. New format: arm.points[]. Legacy format:
+                    // a shared config.center + arm.end → convert to a 2-point line.
+                    const legacyCenter = (config.center && (config.center.x || config.center.y))
+                        ? { x: config.center.x, y: config.center.y } : null;
+                    if (config.arms && Array.isArray(config.arms)) {
+                        config.arms.forEach(a => {
+                            let points = null;
+                            if (Array.isArray(a.points) && a.points.length >= 2) {
+                                points = a.points.map(p => ({ x: p.x, y: p.y }));
+                            } else if (a.end && legacyCenter) {
+                                points = [legacyCenter, { x: a.end.x, y: a.end.y }];
+                            }
+                            if (points) Model.addArm(points, a.name, { color: a.color, width: a.width, visible: a.visible });
+                        });
+                    }
+
+                    // Try to load the screenshot
+                    const imgSrc = `/${config.intersection_id}_snapshot.png`;
+                    try {
+                        await this.loadImageToCanvas(imgSrc);
+                        Model.originalImgSrc = imgSrc + '?t=' + Date.now();
+                    } catch {
+                        // No screenshot available
+                    }
+
+                    View.renderMode(Model.mode);
+                    View.renderCanvas();
+                    View.renderArmList();
+                    View.renderResults();
+                    await this.fetchAnalyses(config.intersection_id || value);
+                    View.showToast(`Loaded config: ${config.name || value}`, 'info');
+                } catch (err) {
+                    View.showToast(`Failed to load config: ${err.message}`, 'error');
+                }
+            }
+        };
+
+        // ─── INIT ─────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', () => Controller.init());
+    })();
+    </script>
+
+    <!-- ═══ Navigation + Weekly Updates ═══════════════════════════ -->
+    <script>
+    'use strict';
+
+    // ─── Page Navigation ─────────────────────────────────────────
+    let _currentPage = 'home';
+    let _weeklyData = [];
+    let _weeksLoaded = false;
+
+    function navigateTo(page) {
+        // Hide all pages
+        ['home', 'reports', 'weekly-updates'].forEach(p => {
+            const el = document.getElementById('page-' + p);
+            if (el) el.classList.add('hidden');
+        });
+
+        // Activate the correct page
+        const target = document.getElementById('page-' + page);
+        if (target) target.classList.remove('hidden');
+
+        // Update nav tab active state
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.page === page);
+        });
+
+        _currentPage = page;
+
+        if (page === 'reports' && window._controller) {
+            window._controller.loadIntersections();
+            window._controller.loadHistory();
+        }
+        if (page === 'weekly-updates') {
+            loadWeeklyUpdates();
+        }
+    }
+
+    // ─── Weekly Updates: Load ─────────────────────────────────────
+    async function loadWeeklyUpdates() {
+        try {
+            const res = await fetch('/api/weekly-updates');
+            if (!res.ok) throw new Error('Failed to fetch');
+            _weeklyData = await res.json();
+            renderWeekCards(_weeklyData);
+            _weeksLoaded = true;
+        } catch (err) {
+            document.getElementById('weeks-grid').innerHTML =
+                '<div style="grid-column:1/-1;text-align:center;padding:60px 0;color:var(--err);font-style:italic;">Could not load weekly updates.</div>';
+        }
+    }
+
+    // ─── Weekly Updates: Render ───────────────────────────────────
+    function renderWeekCards(updates) {
+        const grid = document.getElementById('weeks-grid');
+        const isAdmin = window._userRole === 'ADMIN';
+
+        const statusMeta = {
+            'upcoming':    { cls: 'status-upcoming',    label: 'Upcoming'     },
+            'in-progress': { cls: 'status-in-progress', label: 'In Progress'  },
+            'completed':   { cls: 'status-completed',   label: 'Completed'    },
+        };
+
+        const fmtDate = (iso) => {
+            const [y, m, d] = iso.split('-').map(Number);
+            return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+            });
+        };
+
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
+            ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+        grid.innerHTML = updates.map((w, i) => {
+            const sm   = statusMeta[w.status] || statusMeta['upcoming'];
+            const num  = String(w.week).padStart(2, '0');
+            const pct  = Math.max(0, Math.min(100, w.progress || 0));
+            const pfill = w.status === 'completed' ? 'progress-fill completed' : 'progress-fill';
+
+            const milestonesHtml = Array.isArray(w.milestones) && w.milestones.length
+                ? `<div class="week-milestones">
+                     <div class="milestones-label">Milestones</div>
+                     ${w.milestones.map(m =>
+                         `<div class="milestone-item">
+                            <div class="milestone-dot"></div>
+                            <span>${esc(m)}</span>
+                          </div>`).join('')}
+                   </div>`
+                : '';
+
+            const notesHtml = w.notes
+                ? `<div class="week-notes">${esc(w.notes)}</div>` : '';
+
+            const descHtml = w.description
+                ? `<div class="week-description">${esc(w.description)}</div>`
+                : `<div class="week-description" style="color:var(--ink-3);font-style:italic;">No description yet.</div>`;
+
+            const editBtn = isAdmin
+                ? `<div class="week-card-footer">
+                     <button class="btn-edit-week" onclick="openEditModal(${w.week})">
+                       <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                         <path stroke-linecap="round" stroke-linejoin="round"
+                           d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                       </svg>
+                       Edit
+                     </button>
+                   </div>` : '';
+
+            return `<div class="week-card animate-fade-in" style="animation-delay:${i * 40}ms" data-week="${w.week}">
+                <div class="week-card-header">
+                    <div class="week-num-wrap">
+                        <div class="week-num-label">Week</div>
+                        <div class="week-number">${num}</div>
+                        <div class="week-date">${fmtDate(w.date)}</div>
+                    </div>
+                    <span class="status-badge ${sm.cls}">${sm.label}</span>
+                </div>
+                <div class="week-divider"></div>
+                <div class="week-title">${esc(w.title) || 'Week ' + w.week}</div>
+                ${descHtml}
+                ${milestonesHtml}
+                <div class="week-progress-section">
+                    <div class="progress-label">
+                        <span>Progress</span>
+                        <span>${pct}%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="${pfill}" style="width:${pct}%"></div>
+                    </div>
+                </div>
+                ${notesHtml}
+                ${editBtn}
+            </div>`;
+        }).join('');
+    }
+
+    // ─── Edit Modal: Open ─────────────────────────────────────────
+    function openEditModal(weekNum) {
+        const w = _weeklyData.find(u => u.week === weekNum);
+        if (!w) return;
+
+        document.getElementById('modal-week-num').textContent = weekNum;
+        document.getElementById('edit-title').value       = w.title || '';
+        document.getElementById('edit-description').value = w.description || '';
+        document.getElementById('edit-status').value      = w.status || 'upcoming';
+        document.getElementById('edit-notes').value       = w.notes || '';
+
+        const pct = Math.max(0, Math.min(100, w.progress || 0));
+        document.getElementById('edit-progress').value      = pct;
+        document.getElementById('edit-progress-val').textContent = pct + '%';
+
+        renderMilestoneInputs(Array.isArray(w.milestones) ? w.milestones : []);
+
+        const modal = document.getElementById('edit-modal');
+        modal.dataset.week = weekNum;
+        modal.classList.remove('hidden');
+    }
+
+    // ─── Edit Modal: Close ────────────────────────────────────────
+    function closeEditModal() {
+        document.getElementById('edit-modal').classList.add('hidden');
+    }
+
+    // ─── Milestone helpers ────────────────────────────────────────
+    function renderMilestoneInputs(list) {
+        const container = document.getElementById('milestone-inputs');
+        container.innerHTML = list.map((m, i) => milestoneRow(m, i)).join('');
+    }
+
+    function milestoneRow(value, idx) {
+        const safe = String(value ?? '').replace(/"/g, '&quot;');
+        return `<div class="milestone-input-row" data-idx="${idx}">
+            <input type="text" value="${safe}" placeholder="Milestone ${idx + 1}…"
+                   class="ms-input" data-idx="${idx}">
+            <button class="btn-remove-ms" onclick="removeMilestone(${idx})" title="Remove">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>`;
+    }
+
+    function addMilestone() {
+        const container = document.getElementById('milestone-inputs');
+        const idx = container.querySelectorAll('.milestone-input-row').length;
+        container.insertAdjacentHTML('beforeend', milestoneRow('', idx));
+        container.lastElementChild.querySelector('input').focus();
+    }
+
+    function removeMilestone(idx) {
+        const container = document.getElementById('milestone-inputs');
+        const row = container.querySelector(`[data-idx="${idx}"]`);
+        if (row) row.remove();
+        // Re-number remaining rows
+        container.querySelectorAll('.milestone-input-row').forEach((r, i) => {
+            r.dataset.idx = i;
+            r.querySelector('.ms-input').dataset.idx = i;
+            r.querySelector('.ms-input').placeholder = `Milestone ${i + 1}…`;
+            r.querySelector('.btn-remove-ms').setAttribute('onclick', `removeMilestone(${i})`);
+        });
+    }
+
+    // ─── Save week update ─────────────────────────────────────────
+    async function saveWeekUpdate() {
+        const modal  = document.getElementById('edit-modal');
+        const weekNum = parseInt(modal.dataset.week, 10);
+        const btn    = document.getElementById('btn-save-week');
+
+        const milestones = Array.from(document.querySelectorAll('.ms-input'))
+            .map(i => i.value.trim()).filter(Boolean);
+
+        const payload = {
+            title:       document.getElementById('edit-title').value.trim(),
+            description: document.getElementById('edit-description').value.trim(),
+            status:      document.getElementById('edit-status').value,
+            progress:    parseInt(document.getElementById('edit-progress').value, 10),
+            notes:       document.getElementById('edit-notes').value.trim(),
+            milestones
+        };
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+        try {
+            const res = await fetch(`/api/weekly-updates/${weekNum}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Save failed');
+
+            const idx = _weeklyData.findIndex(w => w.week === weekNum);
+            if (idx !== -1) _weeklyData[idx] = data.update;
+
+            closeEditModal();
+            renderWeekCards(_weeklyData);
+            if (window._showToast) window._showToast(`Week ${weekNum} updated!`, 'success');
+        } catch (err) {
+            if (window._showToast) window._showToast(`Save failed: ${err.message}`, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg> Save Changes`;
+        }
+    }
+
+    // ─── Escape key closes modal ──────────────────────────────────
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('edit-modal');
+            if (modal && !modal.classList.contains('hidden')) {
+                e.stopPropagation();
+                closeEditModal();
+            }
+        }
+    });
+    </script>
+</body>
+</html>

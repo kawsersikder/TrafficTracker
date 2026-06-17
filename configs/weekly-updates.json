@@ -1,0 +1,128 @@
+[
+  {
+    "week": 1,
+    "date": "2026-06-17",
+    "status": "completed",
+    "title": "Deployment & Initial Testing",
+    "description": "Successfully deployed the Traffic Intersection Analyzer web application for live data scraping and AI-powered traffic analysis. Access has been granted to our respected teacher Muhammad Shafayat Oshman, who can now monitor live traffic progress through the analysis panel in real time. Initial testing was conducted on the Shahbag Intersection in Dhaka, Bangladesh, with successful capture and annotation of traffic arm congestion data.",
+    "milestones": [
+      "Web application deployed and accessible to the research team",
+      "Teacher access granted — Muhammad Shafayat Oshman can view live analysis progress",
+      "Live data scraping pipeline tested and operational",
+      "Shahbag Intersection successfully analyzed (traffic arms mapped and congestion scored)",
+      "Annotated output and JSON results verified for accuracy"
+    ],
+    "progress": 100,
+    "notes": "Next week (Week 2): Planning to expand coverage to additional intersections across Bangladesh and other countries. Weather condition integration via an external API is also targeted for Week 2 to enrich the traffic data with environmental context."
+  },
+  {
+    "week": 2,
+    "date": "2026-06-24",
+    "status": "upcoming",
+    "title": "Week 2",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 3,
+    "date": "2026-07-01",
+    "status": "upcoming",
+    "title": "Week 3",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 4,
+    "date": "2026-07-08",
+    "status": "upcoming",
+    "title": "Week 4",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 5,
+    "date": "2026-07-15",
+    "status": "upcoming",
+    "title": "Week 5",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 6,
+    "date": "2026-07-22",
+    "status": "upcoming",
+    "title": "Week 6",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 7,
+    "date": "2026-07-29",
+    "status": "upcoming",
+    "title": "Week 7",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 8,
+    "date": "2026-08-05",
+    "status": "upcoming",
+    "title": "Week 8",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 9,
+    "date": "2026-08-12",
+    "status": "upcoming",
+    "title": "Week 9",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 10,
+    "date": "2026-08-19",
+    "status": "upcoming",
+    "title": "Week 10",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 11,
+    "date": "2026-08-26",
+    "status": "upcoming",
+    "title": "Week 11",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  },
+  {
+    "week": 12,
+    "date": "2026-09-02",
+    "status": "upcoming",
+    "title": "Week 12",
+    "description": "",
+    "milestones": [],
+    "progress": 0,
+    "notes": ""
+  }
+]

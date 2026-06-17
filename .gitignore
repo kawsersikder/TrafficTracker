@@ -1,0 +1,41 @@
+# ── Environment & secrets ──────────────────────────────────────────
+.env
+*.env.local
+*.env.production
+
+# ── Node ───────────────────────────────────────────────────────────
+node_modules/
+.dist/
+dist/
+
+# ── Python ─────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# ── Runtime-generated images (captured screenshots & annotations) ──
+public/*.png
+public/*.jpg
+public/*.jpeg
+
+# ── One-time credential / seed scripts (contain real passwords) ────
+create_teacher.ts
+create_admins.ts
+update_photo.ts
+
+# ── Prisma generated client (rebuilt via `npx prisma generate`) ────
+node_modules/.prisma/
+
+# ── OS & editor noise ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/settings.json
+
+# ── Claude Code local config ───────────────────────────────────────
+.claude/

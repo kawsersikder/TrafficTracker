@@ -1,0 +1,65 @@
+[
+  {
+    "intersection_id": "shahbag_01",
+    "name": "Shahbag Square",
+    "google_maps_url": "https://www.google.com/maps/@23.7380389,90.3961827,17.76z/data=!5m1!1e1?entry=ttu&g_ep=EgoyMDI2MDYxMC4wIKXMDSoASAFQAw%3D%3D",
+    "arms": [
+      {
+        "name": "shahbag_banglamotor",
+        "points": [
+          {
+            "x": 565,
+            "y": 774
+          },
+          {
+            "x": 571,
+            "y": 587
+          },
+          {
+            "x": 599,
+            "y": 398
+          }
+        ]
+      },
+      {
+        "name": "banglamotor_shahbag",
+        "points": [
+          {
+            "x": 633,
+            "y": 201
+          },
+          {
+            "x": 629,
+            "y": 302
+          },
+          {
+            "x": 627,
+            "y": 352
+          },
+          {
+            "x": 647,
+            "y": 376
+          }
+        ]
+      },
+      {
+        "name": "elephantroad_shahbag",
+        "points": [
+          {
+            "x": 412,
+            "y": 358
+          },
+          {
+            "x": 551,
+            "y": 378
+          },
+          {
+            "x": 597,
+            "y": 382
+          }
+        ]
+      }
+    ],
+    "country": "BANGLADESH"
+  }
+]
