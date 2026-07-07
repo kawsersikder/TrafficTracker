@@ -39,3 +39,7 @@ Thumbs.db
 
 # ── Claude Code local config ───────────────────────────────────────
 .claude/
+
+# ── Datasets: keep documentation, exclude raw data (too large for git)
+dataset/**/raw/
+dataset/**/code/
