@@ -74,3 +74,12 @@ dataset/**/extracted/
 F:/temp/
 temp/
 *.tmp
+
+# ── Phase 2/3 run bookkeeping ──────────────────────────────────────
+.run_state*/
+logs*/
+RUN_PROGRESS*.md
+
+# ── Converted YOLO datasets (rebuild via tfpbd_to_yolo.py) ─────────
+experiments/out/tfpbd_yolo/
+experiments/out/dhakaai_shared_yolo/

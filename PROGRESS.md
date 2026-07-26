@@ -138,7 +138,85 @@ the two-source comparison, and per-class detection for v8s vs v8m.
 ### 3.4 Dhaka vision detectors
 
 | Model | mAP50 | mAP50-95 |
+|### 3.5 Dhaka cross-dataset generalisation (new)
+
+Two detectors, both YOLOv8s, both trained on Dhaka, evaluated on each other.
+mAP50 over the 5 shared vehicle classes (`person` excluded — DhakaAI has no
+pedestrian class, so it scores 0 there by construction):
+
+| trained on ↓ / tested on → | TFP-BD | DhakaAI |
+|### 3.6 Dhaka congestion index — derived from imagery (new)
+
+Dhaka has no public congestion time series; every open Dhaka dataset is imagery.
+We derive one. TFP-BD's annotated frames are consecutive video frames (~600 per
+window, gap-free, ~5.9 s apart), so per-frame **visual occupancy** —
+(sum of vehicle bbox area) / (frame area) — is itself a time series. This is the
+camera analogue of loop-detector occupancy, which is exactly how Bangkok
+Sathorn's CI is defined. Perspective distortion is handled by per-series robust
+scaling (q05..q95), as already done for Bangkok CCTV lane volumes.
+
+Result: `experiments/out/dhaka_ci.parquet` — **40 series, 23,678 steps**,
+4 intersections x 2 lane types x 5 time-of-day windows. Mean CI 0.408, mean 9.6
+vehicles and 1.6 pedestrians per frame.
+
+Forecasting benchmark (one step = 5.9 s ahead):
+
+| model | MAE | onset-F1 |
 |---|---|---|
+| **GRU** | **0.1889** | **0.059** |
+| TCN | 0.1890 | 0.033 |
+| LSTM | 0.1892 | 0.042 |
+| xgboost | 0.2004 | 0.052 |
+| persistence | 0.2094 | 0.000 |
+| historical average | 0.2258 | 0.000 |
+
+**This is the first dataset in the project where deep models beat every
+baseline.** On Manila persistence won macro-F1 at 30 min; on Sathorn loop-coil
+historical-average won at every horizon. On Dhaka all three architectures beat
+persistence by ~10% MAE. The plausible reason is temporal resolution: at ~6 s
+steps there is fine-grained structure that a copy-forward baseline cannot use,
+whereas at 15–30 min steps congestion is so persistent that copying wins.
+
+**Three caveats that must appear in the paper:**
+
+1. **Horizon is not comparable across cities.** One step here is ~5.9 s; one
+   step in Manila/Bangkok is 15–30 min. Do not place these MAE values in the
+   same table as the other cities without saying so.
+2. **`seasonal_naive` degenerates to `persistence`** (identical 0.2094) because a
+   one-week lookback does not exist inside one-hour windows. Report it as
+   not-applicable rather than as a baseline.
+3. **Onset-F1 is low for everyone** (0.03–0.06 vs 411 onset events). Short-horizon
+   occupancy onsets are near-unpredictable at this resolution; this is a
+   negative result and should be stated as one.
+
+Coverage is five one-hour weekday windows, not continuous days, so no daily or
+weekly seasonality can be estimated. It supports characterisation and
+short-horizon forecasting, not 15-minute-ahead cross-city transfer.
+
+---|---|---|
+| **TFP-BD** | **0.772** | 0.192 |
+| **DhakaAI** | 0.457 | **0.771** |
+
+Within-domain the two are indistinguishable (0.772 vs 0.771). Cross-dataset,
+both collapse — but **asymmetrically**. TFP-BD → DhakaAI loses 75% of
+performance; DhakaAI → TFP-BD loses 41%. The curated, multi-location source
+transfers roughly 2.4× better than the fixed-4-camera source.
+
+**This is the same structural principle as the congestion transfer asymmetry in
+§3.1.** There, Manila (298 segments, 9 arterials) transferred to Bangkok
+(13 detectors, 1 intersection) but not the reverse. Here, DhakaAI (curated
+across many scenes) transfers to TFP-BD (4 fixed cameras) far better than the
+reverse. Two independent modalities, same finding: **transfer works when the
+source is structurally more diverse than the target** — diversity of the source,
+not its size, is what buys generalisation.
+
+Practical consequence worth stating: a detector trained on one city's curated
+benchmark loses three-quarters of its accuracy on continuous footage from the
+same city. Reporting only in-domain mAP substantially overstates readiness.
+
+Artifacts: `experiments/out/dhaka/cross_dataset_matrix.{csv,md}`.
+
+---|---|---|
 | YOLOv8n | 0.433 | 0.290 |
 | YOLOv8s | 0.541 | 0.364 |
 | YOLOv8m | 0.613 | 0.418 |
@@ -231,3 +309,78 @@ Environment notes learned the hard way:
 
 Generated outputs (`experiments/out/`, `experiments/runs/`, `runs/`, model
 weights) are deliberately untracked; they rebuild from the orchestrator.
+
+---
+
+## 6. Repository map — what every script does
+
+Read this before touching anything; several scripts have non-obvious contracts.
+
+### Data preparation
+| Script | Produces | Notes |
+|---|---|---|
+| `experiments/manila/reconstruct_segments.py` | `out/manila_segments.parquet` | Positional reconstruction of the flattened MMDA feed; 298 series |
+| `experiments/sathorn/prepare_sathorn.py` | `out/sathorn.parquet`, `out/sathorn_cctv.parquet` | Loop-coil uses `--mode occupancy`; CCTV needs `--date-from-filename --series-from-parent --per-file-resample` and a comma-separated `--value-col` |
+| `experiments/dhaka_vision/tfpbd_to_ci.py` | `out/dhaka_ci.parquet` | Visual occupancy -> CI; 40 series |
+| `experiments/dhaka_vision/voc_to_yolo.py` | `out/dhakaai_yolo/` | DhakaAI, 21 native classes |
+| `experiments/dhaka_vision/tfpbd_to_yolo.py` | `out/tfpbd_yolo/`, `out/dhakaai_shared_yolo/` | `--stride 4` subsamples redundant video frames; val = held-out Location 4. `--dhakaai-remap` builds the shared-vocabulary DhakaAI copy |
+
+### Models and evaluation
+| Script | Notes |
+|---|---|
+| `experiments/train_forecaster.py` | GRU/LSTM/TCN. Run dir auto-named `<data>_<model>_<task>_h<N>`; override with `--out` (needed for seed replicates) |
+| `experiments/baselines.py` | persistence, seasonal-naive, historical-average, XGBoost |
+| `experiments/transfer_kday.py` | k-day transfer. **Output filename encodes data+target+source+horizon+seed** — this was patched three times after silent overwrites; do not simplify it |
+| `experiments/analysis/aggregate_results.py` | Rebuilds `out/paper/results_table.md` and all transfer figures |
+| `experiments/analysis/transfer_variance.py` | Collapses transfer CSVs into mean +/- std; reports the 69-of-70 count |
+| `experiments/dhaka_vision/per_class_table.py` | Per-class detector table, parsed from logs (no GPU) |
+| `experiments/dhaka_vision/make_figures.py` | The three Dhaka figures |
+
+### Orchestrators
+`RUN_OVERNIGHT.bat` (49 jobs, ~5 h), `RUN_PHASE2.bat` (transfer seeds + reverse
+direction, ~20 min), `RUN_PHASE3.bat` (Dhaka cross-dataset vision, ~3 h).
+
+All three share the same design: sentinels in `.run_state*/`, per-job logs in
+`logs*/`, a live ledger in `RUN_PROGRESS*.md`. Re-running skips completed jobs.
+
+**To force a job to re-run you must delete BOTH its sentinel and its log** — the
+resume logic treats a log containing the success marker as proof of completion.
+
+## 7. Traps that have already cost time
+
+1. **PowerShell files must be pure ASCII.** PS 5.1 reads UTF-8 as ANSI; one
+   em-dash broke parsing across an entire 229-line script.
+2. **Never judge job success by exit code.** PS 5.1 raises `NativeCommandError`
+   whenever a native command writes to stderr through a merged pipeline, and
+   tqdm draws progress bars there. The orchestrators check the log for a
+   per-job success marker instead.
+3. **Log silence is not a hang.** `Tee-Object` buffers. A job that looked wedged
+   for 7 minutes had already written its output. Check for the artifact first.
+4. **Ultralytics nests output**: weights land in
+   `runs/detect/runs/detect/<name>/weights/best.pt`, not `runs/detect/<name>/`.
+5. **`workers=0` on every YOLO job**, or Windows raises
+   `OSError [WinError 1455] paging file too small`.
+6. **Keep `TEMP`/`TMP` on `F:\temp`.** The C: drive filled to 0.08 GB once and
+   halted training mid-run.
+7. **6 GB VRAM means sequential GPU jobs only.** Do not parallelise training.
+8. **Filename collisions are the recurring failure mode here.** Three separate
+   results were silently overwritten before the naming was made fully explicit.
+   Any new experiment variant must encode every varying parameter in its output
+   filename.
+9. **A corrupt `.git/objects/info/commit-graph`** can make `git status` fail with
+   `improper chunk offset`. It is a derived cache — delete it and git rebuilds.
+
+## 8. Known gaps
+
+- **No ST-GNN.** The proposal lists spatio-temporal graph networks among the RQ2
+  models; none was built, despite 298 Manila segments having real spatial
+  structure. Survivable at ICCIT/TENCON with a limitations sentence; likely a
+  required revision at IEEE Access or ITSC. ~1 week of work.
+- **No fresh Dhaka collection.** `dataset/dhaka_trafficktracker-own/` holds only
+  a README. `configs/intersections.json` has one intersection (Shahbag Square)
+  and there is no `.env`, so the capture pipeline has never run. Deliberate
+  decision: collection needs ~5 weeks and the project had 7 days.
+- **Transformer baseline** mentioned in the proposal was never built.
+- **Seed replicates** exist only at h1 on three curves; h2/h4 and the CCTV curve
+  are single-seed.
+- **MeTS-10 Bangkok and Istanbul** are unobtainable; documented as limitations.
