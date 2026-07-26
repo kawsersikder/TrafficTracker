@@ -1,3 +1,5 @@
+﻿> **DROPPED (2026-07-13).** Team decision: Kolkata is excluded from the study (per the proposal's decision rule — drop rather than weaken the paper with an unverified source). Kept for provenance only.
+
 # Kolkata — Traffic Congestion Management Dataset (IEEE DataPort)
 
 ## Credit

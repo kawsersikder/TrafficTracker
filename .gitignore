@@ -43,3 +43,34 @@ Thumbs.db
 # ── Datasets: keep documentation, exclude raw data (too large for git)
 dataset/**/raw/
 dataset/**/code/
+
+# ── Model weights (regenerate by training; too large for git) ──────
+*.pt
+*.pth
+*.onnx
+
+# ── Training / experiment outputs ──────────────────────────────────
+runs/
+experiments/out/
+experiments/runs/
+
+# ── Overnight-run bookkeeping (regenerated on every run) ───────────
+.run_state/
+logs/
+RUN_PROGRESS.md
+
+# ── Superseded working notes (folded into PROGRESS.md) ─────────────
+MORNING_README.md
+HANDOVER.md
+session_summary.md
+
+# ── Vendored extraction binaries (download as needed) ──────────────
+*.exe
+
+# ── Extracted dataset archives (rebuild from the source .rar/.zip) ─
+dataset/**/extracted/
+
+# ── Scratch ────────────────────────────────────────────────────────
+F:/temp/
+temp/
+*.tmp

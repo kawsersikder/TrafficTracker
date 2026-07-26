@@ -1,4 +1,4 @@
-# Dataset Collection — Cross-City Traffic Congestion Study
+﻿# Dataset Collection — Cross-City Traffic Congestion Study
 
 All datasets used in the CSE498R project *"Cross-City Deep Learning for Traffic Congestion in South & Southeast Asian Megacities"* (see [../RESEARCH_PROPOSAL.md](../RESEARCH_PROPOSAL.md)).
 
@@ -14,7 +14,7 @@ Each subfolder contains a `README.md` with **full credits** (source repository, 
 | [manila_mmda-incidents](manila_mmda-incidents/) | Manila 🇵🇭 | Tabular incident event log (geocoded) | Incident features for Manila | ✅ |
 | [manila_benjiao-traffic-logs](manila_benjiao-traffic-logs/) | Manila 🇵🇭 | Tabular road-status time series (2.2 M rows) | Manila congestion states | ✅ 161 MB |
 | [bangkok_sathorn-intersection](bangkok_sathorn-intersection/) | Bangkok 🇹🇭 | **Multimodal** sensors (CCTV/loop/thermal/GPS/signals) | Ground-truth validation | ✅ 365 MB |
-| [kolkata_ieee-dataport](kolkata_ieee-dataport/) | Kolkata 🇮🇳 | Tabular (to verify) | Optional 5th city | Needs IEEE account |
+| [kolkata_ieee-dataport](kolkata_ieee-dataport/) | Kolkata 🇮🇳 | Tabular (unverified) | **DROPPED 2026-07-13** — excluded from the study | — |
 | [dhaka_tfp-bd](dhaka_tfp-bd/) | Dhaka 🇧🇩 | Image (23,678 annotated frames) | Vehicle-mix quantification | Mendeley (browser/Colab) |
 | [dhaka_dhakaai](dhaka_dhakaai/) | Dhaka 🇧🇩 | Image (3,953 imgs, 21 classes, detection) | Vehicle detection training | via kagglehub |
 | [dhaka_poribohon-bd](dhaka_poribohon-bd/) | Dhaka 🇧🇩 | Image (9,058 imgs, 15+1 classes) | Detection augmentation | Mendeley (browser/Colab) |
@@ -82,4 +82,4 @@ dhakai = kagglehub.dataset_download("rifat963/dhakaai-dhaka-based-traffic-detect
 !wget -q https://ndownloader.figshare.com/files/29021766 -O cctv-camera.rar   # + see folder README for all 9 files
 ```
 
-Mendeley (TFP-BD, Poribohon-BD), HERE (MeTS-10 movies), and IEEE DataPort (Kolkata) require a free account / browser download — see the per-folder READMEs.
+Mendeley (TFP-BD, Poribohon-BD) and HERE (MeTS-10 movies) require a free account / browser download — see the per-folder READMEs. Kolkata is dropped.
