@@ -1,333 +1,180 @@
-# Traffic Intersection Analyzer
+# TrafficTracker
 
-> **CSE498R — Computer Science Research Project**  
+> **CSE498R — Computer Science Research Project**
 > North South University · Department of Electrical and Computer Engineering
 
-An AI-powered web application that captures live Google Maps traffic screenshots, lets researchers draw road arm geometries on top of them, and runs a computer vision pipeline (OpenCV + Claude Vision) to score congestion on each arm in real time. Results are stored in PostgreSQL and browsable through a role-based dashboard.
+**Cross-city transfer learning for traffic congestion forecasting in South and
+Southeast Asian megacities.**
+
+Cities that most need congestion forecasting — Dhaka, Manila, Jakarta — have the
+least data to train it on. Nearly all published deep-learning traffic research is
+built on sensor-rich Western and Chinese benchmarks (METR-LA, PeMS) with
+homogeneous, lane-disciplined traffic. This project asks whether a model trained
+where data *is* available transfers to a city where it is not, and how many days
+of local data a data-scarce city needs before local training wins.
+
+Current status, results and roadmap: **[PROGRESS.md](PROGRESS.md)**
 
 ---
 
-## Table of Contents
+## Headline result
 
-1. [Features](#features)
-2. [Tech Stack](#tech-stack)
-3. [Architecture](#architecture)
-4. [Prerequisites](#prerequisites)
-5. [Setup](#setup)
-6. [Environment Variables](#environment-variables)
-7. [Database Setup](#database-setup)
-8. [Running the Server](#running-the-server)
-9. [Creating Users](#creating-users)
-10. [Project Structure](#project-structure)
-11. [API Reference](#api-reference)
-12. [Python Vision Pipeline](#python-vision-pipeline)
-13. [Weekly Updates](#weekly-updates)
-14. [License](#license)
+Fine-tuning a pre-trained forecaster beats training from scratch at **every**
+amount of local data, on **every** target city, at **every** horizon — 25 of 25
+comparisons.
 
----
+Manila → Bangkok CCTV, 30-minute horizon, macro-F1:
 
-## Features
-
-- **Live screenshot capture** — headless Playwright browser captures Google Maps traffic layer on demand
-- **Interactive road arm drawing** — canvas-based polyline editor to map each road arm's geometry
-- **AI congestion analysis** — Python/OpenCV pipeline scores green/yellow/red congestion per arm, with stop-line signal detection
-- **Role-based access**
-  - `ADMIN` — full access: draw arms, run analysis, edit weekly updates
-  - `TEACHER` — read-only dashboard: view results, reports, and weekly progress
-- **Reports page** — filterable history table across all intersections, countries, and time windows
-- **Weekly Updates** — 12-week research timeline with interactive progress cards (admin-editable)
-- **JWT authentication** — token-based login with 24-hour sessions
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Vanilla HTML/CSS/JS (Claude design system) |
-| Backend | Node.js + Express 5 + TypeScript (tsx) |
-| Database | PostgreSQL + Prisma ORM |
-| Vision | Python 3 + OpenCV + NumPy + Pydantic |
-| Browser automation | Playwright (Chromium) |
-| Auth | bcrypt + JSON Web Tokens |
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Browser (SPA)                       │
-│  Home · Reports · Weekly Update  (role-aware nav)       │
-└────────────────────┬────────────────────────────────────┘
-                     │ HTTP / REST
-┌────────────────────▼────────────────────────────────────┐
-│            Express Server  (backend/server.ts)          │
-│  /api/auth  /api/capture  /api/analyze  /api/history   │
-│  /api/configs  /api/weekly-updates                     │
-└──────┬──────────────────────────────────┬───────────────┘
-       │ Prisma ORM                       │ child_process
-┌──────▼──────────┐             ┌─────────▼───────────────┐
-│   PostgreSQL    │             │   Python Vision Pipeline  │
-│  users          │             │   extract_traffic.py      │
-│  intersections  │             │   OpenCV · NumPy          │
-│  intersection_  │             │   Congestion scoring      │
-│    arms         │             │   Annotated PNG output    │
-│  traffic_       │             └─────────────────────────-┘
-│    observations │
-│  processing_    │
-│    runs         │
-└─────────────────┘
-```
-
----
-
-## Prerequisites
-
-| Requirement | Version |
-|---|---|
-| Node.js | ≥ 20 |
-| npm | ≥ 10 |
-| Python | ≥ 3.10 |
-| PostgreSQL | ≥ 14 |
-| Chromium (Playwright) | installed via `npx playwright install` |
-
----
-
-## Setup
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/<your-org>/cse498r-traffic.git
-cd cse498r-traffic
-```
-
-### 2. Install Node dependencies
-
-```bash
-npm install
-```
-
-### 3. Install Python dependencies
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 4. Install Playwright browser
-
-```bash
-npx playwright install chromium
-```
-
-### 5. Configure environment variables
-
-```bash
-cp .env.example .env
-# Edit .env with your PostgreSQL credentials and a secure JWT secret
-```
-
-See [Environment Variables](#environment-variables) for details.
-
-### 6. Set up the database
-
-```bash
-npx prisma generate          # generates the Prisma client
-npx prisma db push           # applies the schema to your PostgreSQL database
-```
-
-### 7. Create your first user
-
-```bash
-npx tsx scripts/create-user.ts admin@example.com yourpassword ADMIN "Your Name"
-```
-
----
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and fill in all values:
-
-| Variable | Description | Example |
+| Local data | Fine-tuned | From scratch |
 |---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/trafficdb` |
-| `JWT_SECRET` | Secret key for signing JWTs — **use a long random string** | `openssl rand -hex 32` |
-| `PORT` | HTTP port for the Express server | `3000` |
+| zero-shot | 0.676 | — |
+| 1 day | 0.691 | 0.297 |
+| 7 days | 0.709 | 0.642 |
+| 28 days | 0.712 | 0.703 |
 
-> **Never commit `.env` to version control.** It is listed in `.gitignore`.
+A model that has never seen Bangkok outperforms a locally-trained model given
+three days of Bangkok data. Local training takes roughly four weeks to catch up.
 
----
-
-## Database Setup
-
-The schema is managed by Prisma. After setting `DATABASE_URL` in `.env`:
-
-```bash
-# Push the full schema (creates all tables)
-npx prisma db push
-
-# Or, if you prefer migrations:
-npx prisma migrate dev --name init
-```
-
-### Schema overview
-
-```
-users                — accounts (ADMIN | TEACHER roles)
-intersections        — saved intersection configs (name, country, GPS)
-intersection_arms    — per-arm polyline geometry
-traffic_observations — per-arm congestion readings (per analysis run)
-processing_runs      — log of vision pipeline executions
-```
-
-The full Prisma schema is at [`prisma/schema.prisma`](prisma/schema.prisma).
-
-### Supported countries (enum)
-
-`BANGLADESH` · `INDIA` · `THAILAND` · `PHILIPPINES` · `MALAYSIA`
+Two findings we report rather than hide: at 30-minute horizons a **persistence
+baseline beats every learned model** on macro-F1 while scoring exactly zero on
+congestion-onset detection — standard metrics mislead. And on the Sathorn
+loop-coil data a **historical-average baseline wins at every horizon**, because
+occupancy at four detectors on one intersection is strongly diurnal.
 
 ---
 
-## Running the Server
+## What is in this repository
 
-```bash
-# Development (tsx hot-ish reload)
-npm run dev
+The project has two halves.
 
-# Or directly
-npx tsx backend/server.ts
+**`experiments/` — the research pipeline.** Data harmonisation into a Unified
+Congestion Index, characterisation, forecasting benchmarks (GRU / LSTM / TCN
+against persistence, seasonal-naïve, historical-average and XGBoost), k-day
+transfer curves, and the Dhaka vision track.
+
+**Everything else — the capture instrument.** A web application that screenshots
+the Google Maps traffic layer, lets researchers draw road-arm geometries on it,
+and scores congestion per arm with OpenCV. This is how the Dhaka dataset will be
+collected, and it is released as a reusable instrument for any city without
+sensor infrastructure.
+
+```
+experiments/
+  common/          shared data loading, models, metrics
+  manila/          MMDA feed reconstruction
+  sathorn/         Bangkok loop-coil + CCTV preparation
+  jakarta/         characterisation
+  dhaka_vision/    DhakaAI conversion, TFP-BD vehicle-mix analysis
+  analysis/        table and figure generation
+  train_forecaster.py, baselines.py, transfer_kday.py
+  collect/         plan for fresh 2026 collection
+
+backend/           Express + Prisma API
+browser/           Playwright capture
+vision/            OpenCV congestion scoring
+public/            dashboard UI
+dataset/           one README per source: provenance, license, citation
 ```
 
-The server starts on `http://localhost:3000` (or the `PORT` in `.env`).  
-It serves the frontend from `public/` and exposes all `/api/*` routes.
+Generated artifacts — `experiments/out/`, `experiments/runs/`, `runs/`, model
+weights — are deliberately untracked. They rebuild from the orchestrator below.
 
 ---
 
-## Creating Users
+## Data sources
 
-Use the generic CLI script — **never hardcode credentials in source files**:
+| City | Source | Role |
+|---|---|---|
+| Manila | MMDA road-status logs, 2015–16 (rescued; the source site is gone) | Transfer source, 298 segment series |
+| Bangkok | Sathorn loop-coil occupancy, 2016 | Cross-city transfer target |
+| Bangkok | Sathorn CCTV lane volumes, 2016–2019 | Second transfer target, 3-year series |
+| Jakarta / Bandung / Semarang | HERE jam factors, 2025–26 (Zenodo) | Cross-city characterisation |
+| Dhaka | DhakaAI, TFP-BD | Vehicle heterogeneity |
+| Dhaka | TrafficTracker (ours) | **Planned** — not yet collected |
 
-```bash
-# Create a TEACHER account
-npx tsx scripts/create-user.ts teacher@university.edu "SecurePass!" TEACHER "Dr. Jane Smith"
+Per-source provenance, licensing and citation details are in each
+`dataset/*/README.md`.
 
-# Create an ADMIN account
-npx tsx scripts/create-user.ts admin@university.edu "SecurePass!" ADMIN "John Doe"
-```
-
-Both `upsert` safely — running the script again with the same email updates the record.
-
----
-
-## Project Structure
-
-```
-traffic/
-├── backend/
-│   ├── server.ts          # Express app — all routes & auth
-│   └── db.ts              # Prisma client + DB helper functions
-├── browser/
-│   ├── capture.ts         # Playwright screenshot capture
-│   └── map-session.ts     # Google Maps session management
-├── configs/
-│   ├── intersections.json # Saved intersection arm configs
-│   └── weekly-updates.json# 12-week project timeline data
-├── jobs/
-│   ├── run_batch.ts       # Batch analysis runner
-│   ├── run_capture.ts     # Batch capture runner
-│   └── export_training_set.ts
-├── prisma/
-│   └── schema.prisma      # Database schema
-├── public/
-│   ├── index.html         # Main SPA (Home · Reports · Weekly Update)
-│   └── login.html         # Login page
-├── scripts/
-│   └── create-user.ts     # Generic user creation CLI
-├── vision/
-│   ├── extract_traffic.py # Main vision pipeline (congestion scoring)
-│   ├── preprocess.py      # Image preprocessing utilities
-│   ├── schema.py          # Pydantic output schema
-│   └── detect_intersection.py
-├── .env.example           # Environment variable template
-├── .gitignore
-├── package.json
-├── requirements.txt       # Python dependencies
-├── tsconfig.json
-└── README.md
-```
+Raw data is not committed. Each README explains how to obtain it.
 
 ---
 
-## API Reference
+## Reproducing the experiments
 
-All endpoints (except `/api/auth/login`) require a `Bearer <token>` header.
+All experiments run through one resumable orchestrator:
 
-| Method | Path | Role | Description |
-|---|---|---|---|
-| `POST` | `/api/auth/login` | Public | Sign in, returns JWT |
-| `GET` | `/api/auth/me` | Any | Current user profile |
-| `GET` | `/api/configs` | Any | List all intersection configs |
-| `GET` | `/api/config/:id` | Any | Single intersection config |
-| `POST` | `/api/save-config` | Any | Create or update an intersection config |
-| `POST` | `/api/capture` | Any | Capture a live Google Maps screenshot |
-| `POST` | `/api/analyze` | Any | Run the vision pipeline on an intersection |
-| `GET` | `/api/analyses/:id` | Any | Per-arm readings for an intersection |
-| `GET` | `/api/intersections` | Any | All intersections (for filter dropdowns) |
-| `GET` | `/api/history` | Any | Filtered analysis history (`?country=&intersection_id=&days=`) |
-| `GET` | `/api/weekly-updates` | Any | All 12-week update cards |
-| `PUT` | `/api/weekly-updates/:week` | ADMIN | Edit a week card (1–12) |
+```
+cd /d F:\CSE498R\TrafficTracker && RUN_OVERNIGHT.bat
+```
+
+49 jobs, sequential, roughly 5 hours on an RTX 2060. Completed jobs are skipped
+on re-run and vision jobs resume mid-training, so an interrupted run costs at
+most the job that was in flight.
+
+Individual pieces:
+
+```
+python experiments/train_forecaster.py --data experiments/out/manila_segments.parquet --model gru --horizon 2
+python experiments/baselines.py        --data experiments/out/manila_segments.parquet --horizon 1
+python experiments/transfer_kday.py    --data experiments/out/sathorn.parquet \
+       --pretrained experiments/runs/manila_segments_gru_cls_h1/best.pt --k-days 1 3 7 14 28
+python experiments/analysis/aggregate_results.py
+```
+
+Environment notes, including several Windows-specific traps worth knowing before
+you run anything, are in [PROGRESS.md](PROGRESS.md) §5.
 
 ---
 
-## Python Vision Pipeline
+## Running the capture instrument
 
-The vision pipeline is invoked by the backend as a subprocess:
+Requires Node ≥ 20, Python ≥ 3.10, PostgreSQL ≥ 14.
 
-```bash
-.venv/bin/python vision/extract_traffic.py \
-  <intersection_id> \
-  <snapshot_path.png> \
-  <N>-arm \
-  <base64_config> \
-  <output_annotated.png>
+```
+npm install
+python3 -m venv .venv && .venv\Scripts\activate     # Linux/macOS: source .venv/bin/activate
+pip install -r requirements.txt
+npx playwright install chromium
+
+cp .env.example .env          # set DATABASE_URL and JWT_SECRET
+npx prisma generate && npx prisma db push
+npx tsx scripts/create-user.ts admin@example.com yourpassword ADMIN "Your Name"
+
+npm run dev                   # http://localhost:3000
 ```
 
-It outputs a JSON object to stdout containing per-arm congestion scores, dominant signal colours, red-queue fractions, and spatial colour profiles.
+`DATABASE_URL` is a PostgreSQL connection string; `JWT_SECRET` should be a long
+random value (`openssl rand -hex 32`). Never commit `.env` — it is gitignored.
 
-**Required packages** (`requirements.txt`):
+The vision pipeline is invoked by the backend as a subprocess and prints JSON to
+stdout with per-arm congestion scores, dominant signal colours, red-queue
+fractions and spatial colour profiles:
+
 ```
-opencv-python-headless>=4.8.0
-numpy>=1.24.0
-pydantic>=2.0.0
+.venv/bin/python vision/extract_traffic.py <intersection_id> <snapshot.png> <N>-arm <base64_config> <out.png>
 ```
+
+Roles are `ADMIN` (draw arms, run analysis, edit weekly updates) and `TEACHER`
+(read-only dashboard). API routes are listed in `backend/server.ts`.
 
 ---
 
-## Weekly Updates
+## Status
 
-The 12-week project timeline is stored in `configs/weekly-updates.json` and editable through the UI by ADMIN users. Weeks run every Wednesday starting **17 June 2026** through **2 September 2026**.
+Manila, Jakarta and both Bangkok datasets are complete. The Dhaka vision track is
+complete (YOLOv8n/s/m, 0.433 → 0.613 mAP50, plus a 265,698-object vehicle-mix
+characterisation showing 46% of Dhaka vehicles are rickshaws, CNGs, motorbikes or
+bicycles).
 
-| Week | Date |
-|---|---|
-| 1 | Wednesday, 17 Jun 2026 |
-| 2 | Wednesday, 24 Jun 2026 |
-| 3 | Wednesday, 01 Jul 2026 |
-| 4 | Wednesday, 08 Jul 2026 |
-| 5 | Wednesday, 15 Jul 2026 |
-| 6 | Wednesday, 22 Jul 2026 |
-| 7 | Wednesday, 29 Jul 2026 |
-| 8 | Wednesday, 05 Aug 2026 |
-| 9 | Wednesday, 12 Aug 2026 |
-| 10 | Wednesday, 19 Aug 2026 |
-| 11 | Wednesday, 26 Aug 2026 |
-| 12 | Wednesday, 02 Sep 2026 |
+**Dhaka congestion collection has not started**, and it is the critical path for
+the dataset contribution. See [PROGRESS.md](PROGRESS.md) §4.
 
 ---
 
 ## License
 
-This project is part of the CSE498R Research course at North South University.  
-All rights reserved © 2026 — The Research Team.
+Not yet licensed for redistribution. An open license is planned alongside the
+dataset release; until then, all rights reserved © 2026.
+
+Third-party datasets retain their original licenses — see each
+`dataset/*/README.md`.

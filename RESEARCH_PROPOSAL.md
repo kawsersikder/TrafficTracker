@@ -1,5 +1,11 @@
 # Cross-City Deep Learning for Traffic Congestion in South & Southeast Asian Megacities
 
+> **HISTORICAL DOCUMENT (Week 4).** Kept for provenance. The motivation and
+> methodology below still hold, but the city plan has since changed: MeTS-10
+> Bangkok could not be obtained and no Dhaka congestion series has been
+> collected yet, so the executed study is **Manila -> Bangkok** transfer, not
+> Bangkok -> Dhaka. See [PROGRESS.md](PROGRESS.md) for actual status.
+
 > **CSE498R — Computer Science Research Project**
 > North South University · Department of Electrical and Computer Engineering
 > Working title: *"Does a Model Trained on Bangkok Understand Dhaka? Cross-City Transferability of Deep Congestion Forecasting in Data-Scarce Asian Megacities"*
