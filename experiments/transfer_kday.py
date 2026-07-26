@@ -195,9 +195,19 @@ def main() -> None:
     # other horizons get an explicit suffix instead of overwriting them.
     hsuf = "" if args.horizon == 1 else f"_h{args.horizon}"
     ssuf = "" if args.seed == 42 else f"_s{args.seed}"
+    # The source matters: transferring INTO Manila-EDSA from Bangkok is a
+    # different experiment from transferring into it from other Manila
+    # corridors, yet both share data+target+horizon+seed. Without a source tag
+    # the second run silently overwrites the first.
+    src = ""
+    if args.pretrained:
+        stem = Path(args.pretrained).parent.name
+        base = Path(args.data).stem
+        if not stem.startswith(base):
+            src = "_from_" + stem.split("_")[0]
     out = Path(__file__).parent / "runs" / (
         f"transfer_{Path(args.data).stem}_"
-        f"{(args.target_prefix or 'all').replace('|', '_')}{hsuf}{ssuf}.csv")
+        f"{(args.target_prefix or 'all').replace('|', '_')}{src}{hsuf}{ssuf}.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(out, index=False)
     print(f"\nall {n_runs} runs done in {fmt_dur(time.time() - t_start)}\nwrote {out}")

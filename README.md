@@ -19,23 +19,28 @@ Current status, results and roadmap: **[PROGRESS.md](PROGRESS.md)**
 
 ## Headline result
 
-Fine-tuning a pre-trained forecaster beats training from scratch at **every**
-amount of local data, on **every** target city, at **every** horizon — 25 of 25
-comparisons.
+**Transfer works, and it is directional.** Across three seeds, fine-tuning a
+pre-trained forecaster beats training from scratch in **69 of 70**
+(target, horizon, k, seed) comparisons.
 
-Manila → Bangkok CCTV, 30-minute horizon, macro-F1:
+Mean ± std over 3 seeds, Manila → Bangkok loop-coil, 30-minute horizon, macro-F1:
 
 | Local data | Fine-tuned | From scratch |
 |---|---|---|
-| zero-shot | 0.676 | — |
-| 1 day | 0.691 | 0.297 |
-| 7 days | 0.709 | 0.642 |
-| 28 days | 0.712 | 0.703 |
+| 1 day | **0.564 ± 0.001** | 0.209 ± 0.040 |
+| 7 days | **0.571 ± 0.004** | 0.532 ± 0.017 |
+| 28 days | **0.578 ± 0.001** | 0.564 ± 0.002 |
 
-A model that has never seen Bangkok outperforms a locally-trained model given
-three days of Bangkok data. Local training takes roughly four weeks to catch up.
+Pre-training does not only raise the mean — it removes variance. Fine-tuned runs
+vary by ≤0.02 while from-scratch runs reach 0.04, which matters more than the
+average when a city has weeks rather than years of data.
 
-Two findings we report rather than hide: at 30-minute horizons a **persistence
+Reversing the direction fails: Bangkok CCTV → Manila reaches only onset-F1 0.064
+zero-shot. Manila (298 segments, nine arterials) teaches Bangkok (13 detectors,
+one intersection), but not the other way round — so transfer appears to require a
+source that is **structurally richer than the target**.
+
+Two findings we report rather than bury: at 30-minute horizons a **persistence
 baseline beats every learned model** on macro-F1 while scoring exactly zero on
 congestion-onset detection — standard metrics mislead. And on the Sathorn
 loop-coil data a **historical-average baseline wins at every horizon**, because

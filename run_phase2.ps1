@@ -136,6 +136,10 @@ Add-Job "21_seed2_transfer_loop" "Transfer Manila -> loop-coil, seed 2" -Marker 
 Add-Job "22_seed2_transfer_edsa" "Transfer within-Manila -> EDSA, seed 2" -Marker "runs done in" {
     & $PY experiments\transfer_kday.py --data $MANILA --target-prefix "EDSA|" --seed 2 --k-days 1 3 7 14 28
 }
+Add-Job "26_restore_edsa_h1" "Regenerate within-Manila EDSA h1 (seed 42)" -Marker "runs done in" {
+    & $PY experiments\transfer_kday.py --data $MANILA --target-prefix "EDSA|" --k-days 1 3 7 14 28
+}
+
 Add-Job "23_reverse_cctv_to_manila" "Reverse transfer: Bangkok CCTV -> Manila EDSA" -Marker "runs done in" {
     & $PY experiments\transfer_kday.py --data $MANILA --target-prefix "EDSA|" --pretrained "experiments\runs\sathorn_cctv_gru_reg_h1\best.pt" --k-days 1 3 7 14 28
 }

@@ -1,7 +1,7 @@
 # TrafficTracker — progress and plan
 
 **Course:** CSE498R, North South University
-**Updated:** 2026-07-26
+**Updated:** 2026-07-26 (phase 2 complete)
 
 Single status document for the project. `RESEARCH_PROPOSAL.md` remains the
 motivation and is still worth reading, but its city plan has drifted — see
@@ -46,24 +46,51 @@ Nothing in the repo should claim Dhaka transfer results. They do not exist yet.
 
 ### 3.1 Transfer — the headline (RQ3)
 
-Fine-tuning a pre-trained model beats training from scratch at **every** amount
-of local data, on **every** target, at **every** horizon — 25 of 25 comparisons.
+**Transfer works, and it is asymmetric.** Across three seeds, fine-tuning a
+pre-trained model beats training from scratch in **69 of 70**
+(target, horizon, k, seed) comparisons.
 
-Manila → Bangkok CCTV (30-min horizon), macro-F1:
+Mean ± std over 3 seeds, 30-min horizon, macro-F1:
 
-| Local data | Fine-tuned | From scratch |
-|---|---|---|
-| zero-shot | 0.676 | — |
-| 1 day | 0.691 | 0.297 |
-| 3 days | 0.699 | 0.566 |
-| 7 days | 0.709 | 0.642 |
-| 14 days | 0.710 | 0.685 |
-| 28 days | 0.712 | 0.703 |
+| Local data | Manila → Bangkok loop-coil | | Within-Manila → EDSA | |
+|---|---|---|---|---|
+| | fine-tuned | scratch | fine-tuned | scratch |
+| 1 day | **0.564 ± 0.001** | 0.209 ± 0.040 | **0.659 ± 0.003** | 0.287 ± 0.013 |
+| 3 days | **0.554 ± 0.003** | 0.305 ± 0.009 | **0.665 ± 0.014** | 0.383 ± 0.008 |
+| 7 days | **0.571 ± 0.004** | 0.532 ± 0.017 | **0.689 ± 0.001** | 0.541 ± 0.011 |
+| 14 days | **0.574 ± 0.001** | 0.552 ± 0.005 | **0.794 ± 0.013** | 0.714 ± 0.021 |
+| 28 days | **0.578 ± 0.001** | 0.564 ± 0.002 | **0.794 ± 0.019** | 0.752 ± 0.026 |
 
-A model that has never seen Bangkok (0.676) beats a locally-trained model given
-three days of Bangkok data. Local training needs roughly four weeks to catch up.
-The same shape holds for the loop-coil target and for within-Manila transfer at
-60- and 120-minute horizons.
+Manila → Bangkok CCTV (single seed at time of writing) reaches zero-shot 0.676
+against 0.297 for from-scratch on one day of local data.
+
+Two things to draw out of this:
+
+1. **Pre-training stabilises as well as improves.** Fine-tuned standard
+   deviations are 0.0007–0.019; from-scratch reaches 0.040. Pre-training does
+   not merely raise the mean, it removes the variance that makes small-data
+   training unreliable — arguably the more useful property for a city with
+   weeks rather than years of data.
+
+2. **Transfer is directional.** The reverse experiment (Bangkok CCTV → Manila
+   EDSA, `transfer_manila_segments_EDSA__from_sathorn.csv`) reaches only
+   onset-F1 0.064 zero-shot and fine-tuning wins just 2 of 5 k-values. Manila
+   teaches Bangkok; Bangkok does not teach Manila.
+
+   The plausible cause is structural: Manila is 298 segment series over nine
+   arterials, while Sathorn CCTV is 13 lane detectors at a single intersection.
+   The richer, more diverse source generalises; the narrow one does not. This
+   sharpens the contribution from "transfer works" to **"transfer works when the
+   source is structurally richer than the target"**, which also answers the
+   practical question of which city to pre-train on.
+
+   **Caveat to state in the paper:** the forward direction is scored in
+   macro-F1 and the reverse in onset-F1, because the CCTV checkpoint is a
+   regressor rather than a classifier. The asymmetry claim is qualitative;
+   do not present the two numbers as directly comparable.
+
+Error bars regenerate via `experiments/analysis/transfer_variance.py`
+(`experiments/out/paper/transfer_variance.csv` / `.md`).
 
 ### 3.2 Forecasting benchmark (RQ2)
 
@@ -133,17 +160,12 @@ pipeline that produced the Jakarta Zenodo dataset.
 
 Every day of delay is one less day of data. Nothing else on this list competes.
 
-### 4.2 Add error bars to the transfer result (run `RUN_PHASE2.bat`)
+### 4.2 Error bars — DONE
 
-The headline transfer claim currently rests on a single seed per curve. Phase 2
-adds seeds 1 and 2 to the three main h1 curves and runs the reverse direction
-(Bangkok CCTV as source into Manila EDSA), which tests whether transfer is
-symmetric. Nine jobs, roughly 3-4 hours, same resumable design as the first run.
-
-`experiments/analysis/transfer_variance.py` collapses every
-`transfer_*.csv` into mean +/- std and counts how many
-(target, horizon, k, seed) cells fine-tuning wins. With one seed it currently
-reports 40 of 40.
+Phase 2 (`RUN_PHASE2.bat`) added seeds 1 and 2 to the three main h1 curves and
+ran the reverse direction. Result: 69 of 70 comparisons favour fine-tuning, and
+the reverse direction fails — see §3.1. Remaining optional extension: seed
+replicates at h2/h4 and on the CCTV curve.
 
 ### 4.3 Missing model: ST-GNN
 
