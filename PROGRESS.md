@@ -104,6 +104,10 @@ in the morning to 6.8% at midday.
 
 This is the quantitative form of the heterogeneity argument the paper makes.
 
+Artifacts in `experiments/out/dhaka/`: per-class detector table
+(`yolo_per_class.csv`/`.md`) and three 300-dpi figures — mix by time of day,
+the two-source comparison, and per-class detection for v8s vs v8m.
+
 ### 3.4 Dhaka vision detectors
 
 | Model | mAP50 | mAP50-95 |
@@ -129,7 +133,26 @@ pipeline that produced the Jakarta Zenodo dataset.
 
 Every day of delay is one less day of data. Nothing else on this list competes.
 
-### 4.2 Finish the paper
+### 4.2 Add error bars to the transfer result (run `RUN_PHASE2.bat`)
+
+The headline transfer claim currently rests on a single seed per curve. Phase 2
+adds seeds 1 and 2 to the three main h1 curves and runs the reverse direction
+(Bangkok CCTV as source into Manila EDSA), which tests whether transfer is
+symmetric. Nine jobs, roughly 3-4 hours, same resumable design as the first run.
+
+`experiments/analysis/transfer_variance.py` collapses every
+`transfer_*.csv` into mean +/- std and counts how many
+(target, horizon, k, seed) cells fine-tuning wins. With one seed it currently
+reports 40 of 40.
+
+### 4.3 Missing model: ST-GNN
+
+Proposal Phase 3 lists spatio-temporal graph networks among the RQ2 models, and
+none was built. With 298 Manila segment series there is real spatial structure
+being ignored. Survivable at ICCIT/TENCON with a limitations sentence; likely a
+required revision at IEEE Access or ITSC. Budget about a week if aiming high.
+
+### 4.4 Finish the paper
 
 `PAPER_DRAFT.md` is v0.1 with real numbers and roughly a dozen `[TODO]` markers:
 authors, venue, related work, conclusion, references, per-class detector table.
@@ -141,12 +164,12 @@ vehicle-mix section.
 Venue decision is still open — ICCIT is the usual Bangladesh target; verify this
 year's deadline. SIGSPATIAL UrbanAI workshop is the backup.
 
-### 4.3 Release engineering
+### 4.5 Release engineering
 
 Add a LICENSE (MIT), push to public GitHub, and mint a Zenodo DOI for the
 reconstructed Manila dataset so the paper can cite it.
 
-### 4.4 Optional
+### 4.6 Optional
 
 Poribohon-BD was never downloaded and largely overlaps DhakaAI. Kolkata was
 formally dropped on 2026-07-13 and should not be revived. Figures for the Dhaka

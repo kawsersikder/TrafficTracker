@@ -194,9 +194,10 @@ def main() -> None:
     # h1 keeps its historical filename so existing artifacts stay valid;
     # other horizons get an explicit suffix instead of overwriting them.
     hsuf = "" if args.horizon == 1 else f"_h{args.horizon}"
+    ssuf = "" if args.seed == 42 else f"_s{args.seed}"
     out = Path(__file__).parent / "runs" / (
         f"transfer_{Path(args.data).stem}_"
-        f"{(args.target_prefix or 'all').replace('|', '_')}{hsuf}.csv")
+        f"{(args.target_prefix or 'all').replace('|', '_')}{hsuf}{ssuf}.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(out, index=False)
     print(f"\nall {n_runs} runs done in {fmt_dur(time.time() - t_start)}\nwrote {out}")
