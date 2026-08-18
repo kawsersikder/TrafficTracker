@@ -634,7 +634,7 @@ def build_stgnn_windows(df, series_ids, history=24, horizon=1):
         "cls": np.array(cls_list, dtype=np.int8),    # (B, N)
         "prev_cls": np.array(prev_cls_list, dtype=np.int8),
         "prev_y": np.array(prev_y_list, dtype=np.float32),
-        "target_ts": np.array(ts_list),
+        "target_ts": np.array(ts_list, dtype="datetime64[ns]"),
         "series_ids": series_ids,
     }
 
